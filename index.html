@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="StudyMaster Pro - Advanced Study Timetable Planner for UPSC, TGPSC, Bank, and SSC competitive exam aspirants. Manage syllabus, track progress, and build winning study schedules.">
+    <meta name="keywords" content="UPSC timetable, TGPSC study plan, Bank exam schedule, SSC preparation, competitive exam planner">
+    <title>StudyMaster Pro | Smart Timetable for UPSC · TGPSC · Bank · SSC</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<!-- ========== AUTH SCREEN ========== -->
+<div id="auth-screen" class="auth-screen">
+    <div class="auth-bg-glow"></div>
+    <div class="auth-card">
+        <div class="auth-logo">
+            <div class="auth-logo-ring"></div>
+            <span class="auth-logo-icon">📚</span>
+        </div>
+        <h1 class="auth-title">StudyMaster Pro</h1>
+        <p class="auth-subtitle">Your AI-powered exam preparation companion</p>
+
+        <div class="auth-tabs">
+            <button class="auth-tab active" id="auth-tab-login" onclick="switchAuthTab('login')">Sign In</button>
+            <button class="auth-tab" id="auth-tab-signup" onclick="switchAuthTab('signup')">Create Account</button>
+        </div>
+
+        <div id="auth-error" class="auth-error" style="display:none"></div>
+        <div id="auth-success" class="auth-success" style="display:none"></div>
+
+        <div class="auth-form" id="auth-form">
+            <div class="auth-field">
+                <label class="auth-label">Email Address</label>
+                <input type="email" id="auth-email" class="auth-input" placeholder="you@example.com" autocomplete="email">
+            </div>
+            <div class="auth-field">
+                <label class="auth-label">Password</label>
+                <input type="password" id="auth-password" class="auth-input" placeholder="Minimum 6 characters" autocomplete="current-password">
+            </div>
+            <div class="auth-field" id="auth-confirm-field" style="display:none">
+                <label class="auth-label">Confirm Password</label>
+                <input type="password" id="auth-confirm" class="auth-input" placeholder="Re-enter password" autocomplete="new-password">
+            </div>
+            <button class="auth-btn" id="auth-submit-btn" onclick="handleAuthSubmit()">
+                <span id="auth-btn-text">Sign In</span>
+                <span id="auth-btn-spinner" class="auth-spinner" style="display:none"></span>
+            </button>
+        </div>
+
+        <div class="auth-divider"><span>Secure • Private • Cloud-synced</span></div>
+        <p class="auth-footer">Your data syncs across all devices via Supabase</p>
+    </div>
+</div>
+
+<!-- ========== LOADING SCREEN ========== -->
+<div id="loading-screen" class="loading-screen" style="display:none">
+    <div class="loader-content">
+        <div class="loader-logo">
+            <div class="logo-ring"></div>
+            <span class="logo-icon">📚</span>
+        </div>
+        <h2 class="loader-title">StudyMaster Pro</h2>
+        <div class="loader-bar"><div class="loader-fill"></div></div>
+        <p class="loader-sub" id="loader-sub-text">Syncing your study data...</p>
+    </div>
+</div>
+
+<!-- ========== SIDEBAR ========== -->
+<nav class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <div class="brand">
+            <span class="brand-icon">📚</span>
+            <span class="brand-name">StudyMaster<span class="brand-pro">Pro</span></span>
+        </div>
+        <button class="sidebar-close" id="sidebar-close" aria-label="Close Sidebar">✕</button>
+    </div>
+
+    <div class="sidebar-profile">
+        <div class="profile-avatar" id="profile-avatar-nav">S</div>
+        <div class="profile-info">
+            <span class="profile-name" id="profile-name-nav">Student</span>
+            <span class="profile-exam" id="profile-exam-nav">Select Exam</span>
+        </div>
+    </div>
+
+    <ul class="nav-menu">
+        <li class="nav-item active" data-section="dashboard" onclick="showSection('dashboard')">
+            <span class="nav-icon">🏠</span>
+            <span class="nav-label">Dashboard</span>
+        </li>
+        <li class="nav-item" data-section="timetable" onclick="showSection('timetable')">
+            <span class="nav-icon">📅</span>
+            <span class="nav-label">My Timetable</span>
+        </li>
+        <li class="nav-item" data-section="syllabus" onclick="showSection('syllabus')">
+            <span class="nav-icon">📖</span>
+            <span class="nav-label">Syllabus Explorer</span>
+        </li>
+        <li class="nav-item" data-section="progress" onclick="showSection('progress')">
+            <span class="nav-icon">📊</span>
+            <span class="nav-label">Progress Tracker</span>
+        </li>
+        <li class="nav-item" data-section="timer" onclick="showSection('timer')">
+            <span class="nav-icon">⏱️</span>
+            <span class="nav-label">Focus Timer</span>
+        </li>
+        <li class="nav-item" data-section="notes" onclick="showSection('notes')">
+            <span class="nav-icon">📝</span>
+            <span class="nav-label">Quick Notes</span>
+        </li>
+    </ul>
+
+    <div class="sidebar-footer">
+        <div class="streak-badge">
+            <span>🔥</span>
+            <span id="streak-display">0 Day Streak</span>
+        </div>
+        <div class="sidebar-user-email" id="sidebar-user-email"></div>
+        <button class="sidebar-logout-btn" id="sidebar-logout-btn" onclick="handleSignOut()">
+            <span>🚪</span> Sign Out
+        </button>
+    </div>
+</nav>
+
+<!-- ========== OVERLAY ========== -->
+<div class="overlay" id="overlay" onclick="closeSidebar()"></div>
+
+<!-- ========== MAIN CONTENT ========== -->
+<main class="main-content" id="main-content">
+
+    <!-- TOP BAR -->
+    <header class="topbar">
+        <button class="menu-btn" id="menu-btn" onclick="toggleSidebar()" aria-label="Toggle Menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="topbar-center">
+            <div class="exam-selector-wrapper">
+                <label class="exam-label">Exam Mode:</label>
+                <div class="exam-tabs" id="exam-tabs">
+                    <button class="exam-tab active" data-exam="upsc" onclick="setExam('upsc')">UPSC</button>
+                    <button class="exam-tab" data-exam="tgpsc" onclick="setExam('tgpsc')">TGPSC</button>
+                    <button class="exam-tab" data-exam="bank" onclick="setExam('bank')">BANK</button>
+                    <button class="exam-tab" data-exam="ssc" onclick="setExam('ssc')">SSC</button>
+                </div>
+            </div>
+        </div>
+        <div class="topbar-right">
+            <div class="sync-indicator" id="sync-indicator" title="Sync status">
+                <span class="sync-dot" id="sync-dot"></span>
+                <span class="sync-label" id="sync-label">Synced</span>
+            </div>
+            <div class="date-display" id="date-display"></div>
+            <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" aria-label="Toggle Theme" title="Toggle Dark/Light Mode">🌙</button>
+            <button class="settings-btn" onclick="openSettings()" aria-label="Settings" title="Settings">⚙️</button>
+        </div>
+    </header>
+
+    <!-- ======================== SECTION: DASHBOARD ======================== -->
+    <section class="section active" id="section-dashboard">
+        <div class="section-header">
+            <div>
+                <h1 class="section-title">Good <span id="greeting-time">Morning</span>, <span id="greeting-name">Aspirant</span>! 👋</h1>
+                <p class="section-subtitle">Your daily study command center — stay focused, stay consistent.</p>
+            </div>
+            <button class="btn btn-primary" onclick="showSection('timetable')">
+                <span>+ New Session</span>
+            </button>
+        </div>
+
+        <!-- Stats Row -->
+        <div class="stats-grid">
+            <div class="stat-card stat-blue">
+                <div class="stat-icon">⏳</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="stat-today-hours">0h 0m</span>
+                    <span class="stat-label">Today's Study</span>
+                </div>
+            </div>
+            <div class="stat-card stat-purple">
+                <div class="stat-icon">📅</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="stat-week-hours">0h</span>
+                    <span class="stat-label">This Week</span>
+                </div>
+            </div>
+            <div class="stat-card stat-green">
+                <div class="stat-icon">✅</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="stat-topics-done">0</span>
+                    <span class="stat-label">Topics Done</span>
+                </div>
+            </div>
+            <div class="stat-card stat-orange">
+                <div class="stat-icon">🔥</div>
+                <div class="stat-info">
+                    <span class="stat-value" id="stat-streak">0</span>
+                    <span class="stat-label">Day Streak</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Today's Schedule + Progress -->
+        <div class="dashboard-grid">
+            <!-- Today's Plan -->
+            <div class="card card-tall">
+                <div class="card-header">
+                    <h3 class="card-title">📅 Today's Schedule</h3>
+                    <button class="btn btn-sm" onclick="showSection('timetable')">Edit</button>
+                </div>
+                <div id="today-schedule-list" class="today-list">
+                    <div class="empty-state-sm">
+                        <span>📭</span>
+                        <p>No sessions planned today.<br>Click "New Session" to start!</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Subject Progress -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">📊 Subject Progress</h3>
+                    <span class="exam-badge" id="dashboard-exam-badge">UPSC</span>
+                </div>
+                <div id="subject-progress-list" class="subject-progress-list">
+                    <div class="empty-state-sm"><span>📈</span><p>Start tracking progress in Syllabus Explorer</p></div>
+                </div>
+            </div>
+
+            <!-- Motivational Quote -->
+            <div class="card quote-card">
+                <div class="quote-icon">💡</div>
+                <p class="quote-text" id="quote-text">"Success is the sum of small efforts, repeated day in and day out."</p>
+                <span class="quote-author" id="quote-author">— Robert Collier</span>
+                <button class="btn btn-sm quote-refresh" onclick="refreshQuote()">New Quote ↻</button>
+            </div>
+
+            <!-- Weekly Heatmap -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">📆 Weekly Study Heat</h3>
+                </div>
+                <div class="heatmap" id="weekly-heatmap"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ======================== SECTION: TIMETABLE ======================== -->
+    <section class="section" id="section-timetable">
+        <div class="section-header">
+            <div>
+                <h1 class="section-title">📅 My Timetable</h1>
+                <p class="section-subtitle">Build and manage your personalized study schedule</p>
+            </div>
+            <button class="btn btn-primary" onclick="openAddSessionModal()">+ Add Session</button>
+        </div>
+
+        <!-- Week Navigation -->
+        <div class="week-nav">
+            <button class="week-nav-btn" onclick="changeWeek(-1)">← Prev Week</button>
+            <span class="week-label" id="week-label">This Week</span>
+            <button class="week-nav-btn" onclick="changeWeek(1)">Next Week →</button>
+        </div>
+
+        <!-- Timetable Grid -->
+        <div class="timetable-wrapper">
+            <div class="timetable-grid" id="timetable-grid">
+                <!-- Generated by JS -->
+            </div>
+        </div>
+
+        <!-- Session List -->
+        <div class="card" style="margin-top:1.5rem;">
+            <div class="card-header">
+                <h3 class="card-title">All Sessions</h3>
+                <div class="filter-row">
+                    <select id="filter-subject" class="select-input" onchange="renderSessionList()">
+                        <option value="">All Subjects</option>
+                    </select>
+                    <select id="filter-day" class="select-input" onchange="renderSessionList()">
+                        <option value="">All Days</option>
+                        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+                        <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+                    </select>
+                </div>
+            </div>
+            <div id="session-list" class="session-list"></div>
+        </div>
+    </section>
+
+    <!-- ======================== SECTION: SYLLABUS ======================== -->
+    <section class="section" id="section-syllabus">
+        <div class="section-header">
+            <div>
+                <h1 class="section-title">📖 Syllabus Explorer</h1>
+                <p class="section-subtitle">Deep-dive into complete exam syllabi with topic tracking</p>
+            </div>
+            <div class="progress-overview-badge">
+                <span id="syllabus-overall-progress">0%</span> Overall
+            </div>
+        </div>
+
+        <!-- Exam Switcher -->
+        <div class="exam-switcher">
+            <button class="exam-switch-btn active" data-exam="upsc" onclick="switchSyllabusExam('upsc')">UPSC IAS</button>
+            <button class="exam-switch-btn" data-exam="tgpsc" onclick="switchSyllabusExam('tgpsc')">TGPSC</button>
+            <button class="exam-switch-btn" data-exam="bank" onclick="switchSyllabusExam('bank')">Bank (IBPS/SBI)</button>
+            <button class="exam-switch-btn" data-exam="ssc" onclick="switchSyllabusExam('ssc')">SSC (CGL/CHSL)</button>
+        </div>
+
+        <!-- Syllabus Content -->
+        <div id="syllabus-content" class="syllabus-content"></div>
+    </section>
+
+    <!-- ======================== SECTION: PROGRESS ======================== -->
+    <section class="section" id="section-progress">
+        <div class="section-header">
+            <div>
+                <h1 class="section-title">📊 Progress Tracker</h1>
+                <p class="section-subtitle">Visualize your exam preparation journey</p>
+            </div>
+        </div>
+
+        <div class="progress-grid">
+            <!-- Exam-wise Completion -->
+            <div class="card">
+                <h3 class="card-title" style="margin-bottom:1.5rem">🎯 Exam-wise Completion</h3>
+                <div id="exam-progress-bars" class="exam-progress-bars"></div>
+            </div>
+
+            <!-- Study Log -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">📓 Study Log</h3>
+                    <button class="btn btn-sm btn-danger" onclick="clearStudyLog()">Clear</button>
+                </div>
+                <div id="study-log" class="study-log">
+                    <div class="empty-state-sm"><span>📓</span><p>No study log yet. Complete sessions to log time!</p></div>
+                </div>
+            </div>
+
+            <!-- Calendar Heatmap -->
+            <div class="card full-width-card">
+                <h3 class="card-title" style="margin-bottom:1.5rem">🗓️ Activity Calendar (Last 30 Days)</h3>
+                <div id="calendar-heatmap" class="calendar-heatmap"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ======================== SECTION: FOCUS TIMER ======================== -->
+    <section class="section" id="section-timer">
+        <div class="section-header">
+            <div>
+                <h1 class="section-title">⏱️ Focus Timer</h1>
+                <p class="section-subtitle">Pomodoro-powered deep work sessions</p>
+            </div>
+        </div>
+
+        <div class="timer-layout">
+            <!-- Timer Card -->
+            <div class="card timer-card">
+                <div class="timer-mode-tabs">
+                    <button class="timer-mode-btn active" id="mode-focus" onclick="setTimerMode('focus')">Focus</button>
+                    <button class="timer-mode-btn" id="mode-short" onclick="setTimerMode('short')">Short Break</button>
+                    <button class="timer-mode-btn" id="mode-long" onclick="setTimerMode('long')">Long Break</button>
+                </div>
+                <div class="timer-ring-wrapper">
+                    <svg class="timer-ring" viewBox="0 0 220 220">
+                        <circle class="timer-ring-bg" cx="110" cy="110" r="95"/>
+                        <circle class="timer-ring-fill" id="timer-ring-fill" cx="110" cy="110" r="95"/>
+                    </svg>
+                    <div class="timer-display">
+                        <span class="timer-time" id="timer-display">25:00</span>
+                        <span class="timer-label" id="timer-mode-label">Focus Session</span>
+                    </div>
+                </div>
+                <div class="timer-subject-pick">
+                    <label class="input-label">Studying:</label>
+                    <select id="timer-subject-pick" class="select-input"></select>
+                </div>
+                <div class="timer-controls">
+                    <button class="timer-btn" id="timer-start" onclick="toggleTimer()">▶ Start</button>
+                    <button class="timer-btn timer-btn-secondary" onclick="resetTimer()">↺ Reset</button>
+                </div>
+                <div class="pomodoro-count">
+                    <span>🍅 Pomodoros today:</span>
+                    <span id="pomodoro-count" class="pomodoro-num">0</span>
+                </div>
+            </div>
+
+            <!-- Timer Stats -->
+            <div class="timer-sidebar">
+                <div class="card">
+                    <h3 class="card-title" style="margin-bottom:1rem">📈 Session Stats</h3>
+                    <div class="timer-stat-row">
+                        <span>Today's Focus</span>
+                        <strong id="ts-today">0 min</strong>
+                    </div>
+                    <div class="timer-stat-row">
+                        <span>This Week</span>
+                        <strong id="ts-week">0 min</strong>
+                    </div>
+                    <div class="timer-stat-row">
+                        <span>Total Pomodoros</span>
+                        <strong id="ts-total-pomo">0</strong>
+                    </div>
+                </div>
+                <div class="card">
+                    <h3 class="card-title" style="margin-bottom:1rem">⚙️ Timer Settings</h3>
+                    <div class="timer-setting">
+                        <label>Focus (min)</label>
+                        <input type="number" id="set-focus" class="num-input" value="25" min="1" max="90" onchange="updateTimerSettings()">
+                    </div>
+                    <div class="timer-setting">
+                        <label>Short Break (min)</label>
+                        <input type="number" id="set-short" class="num-input" value="5" min="1" max="30" onchange="updateTimerSettings()">
+                    </div>
+                    <div class="timer-setting">
+                        <label>Long Break (min)</label>
+                        <input type="number" id="set-long" class="num-input" value="15" min="1" max="60" onchange="updateTimerSettings()">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ======================== SECTION: NOTES ======================== -->
+    <section class="section" id="section-notes">
+        <div class="section-header">
+            <div>
+                <h1 class="section-title">📝 Quick Notes</h1>
+                <p class="section-subtitle">Capture key points, formulas, and important facts</p>
+            </div>
+            <button class="btn btn-primary" onclick="addNote()">+ Add Note</button>
+        </div>
+        <div class="notes-filter">
+            <input type="text" id="notes-search" class="search-input" placeholder="🔍 Search notes..." oninput="renderNotes()">
+            <select id="notes-tag-filter" class="select-input" onchange="renderNotes()">
+                <option value="">All Tags</option>
+            </select>
+        </div>
+        <div id="notes-grid" class="notes-grid"></div>
+    </section>
+
+</main>
+
+<!-- ======================== MODALS ======================== -->
+
+<!-- Add Session Modal -->
+<div class="modal-overlay" id="session-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="session-modal-title">Add Study Session</h3>
+            <button class="modal-close" onclick="closeModal('session-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="input-label">Subject *</label>
+                <select id="session-subject" class="select-input" required></select>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="input-label">Day *</label>
+                    <select id="session-day" class="select-input" required>
+                        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+                        <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="input-label">Start Time *</label>
+                    <input type="time" id="session-start" class="text-input" value="08:00" required>
+                </div>
+                <div class="form-group">
+                    <label class="input-label">End Time *</label>
+                    <input type="time" id="session-end" class="text-input" value="09:00" required>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="input-label">Topic / Description</label>
+                <input type="text" id="session-topic" class="text-input" placeholder="e.g., Indian Polity - Fundamental Rights">
+            </div>
+            <div class="form-group">
+                <label class="input-label">Priority</label>
+                <div class="priority-picker" id="priority-picker">
+                    <button class="priority-btn active" data-p="low" onclick="setPriority('low')">🟢 Low</button>
+                    <button class="priority-btn" data-p="medium" onclick="setPriority('medium')">🟡 Medium</button>
+                    <button class="priority-btn" data-p="high" onclick="setPriority('high')">🔴 High</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="input-label">Repeat</label>
+                <select id="session-repeat" class="select-input">
+                    <option value="none">No Repeat</option>
+                    <option value="daily">Every Day</option>
+                    <option value="weekly">Every Week</option>
+                    <option value="weekdays">Weekdays Only</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('session-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveSession()">Save Session</button>
+        </div>
+    </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settings-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>⚙️ Settings</h3>
+            <button class="modal-close" onclick="closeModal('settings-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="input-label">Your Name</label>
+                <input type="text" id="settings-name" class="text-input" placeholder="Enter your name">
+            </div>
+            <div class="form-group">
+                <label class="input-label">Target Exam</label>
+                <select id="settings-exam" class="select-input">
+                    <option value="upsc">UPSC IAS/IPS/IFS</option>
+                    <option value="tgpsc">TGPSC (Group 1/2/3/4)</option>
+                    <option value="bank">Bank (IBPS/SBI PO/Clerk)</option>
+                    <option value="ssc">SSC (CGL/CHSL/MTS)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="input-label">Daily Study Goal (hours)</label>
+                <input type="number" id="settings-goal" class="num-input" value="8" min="1" max="16">
+            </div>
+            <div class="form-group">
+                <label class="input-label">Exam Date (optional)</label>
+                <input type="date" id="settings-exam-date" class="text-input">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('settings-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+        </div>
+    </div>
+</div>
+
+<!-- Note Modal -->
+<div class="modal-overlay" id="note-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 id="note-modal-title">Add Note</h3>
+            <button class="modal-close" onclick="closeModal('note-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="input-label">Title</label>
+                <input type="text" id="note-title" class="text-input" placeholder="Note title...">
+            </div>
+            <div class="form-group">
+                <label class="input-label">Content</label>
+                <textarea id="note-content" class="textarea-input" rows="5" placeholder="Write your notes here..."></textarea>
+            </div>
+            <div class="form-group">
+                <label class="input-label">Tag</label>
+                <select id="note-tag" class="select-input">
+                    <option>General</option>
+                    <option>History</option>
+                    <option>Polity</option>
+                    <option>Geography</option>
+                    <option>Economy</option>
+                    <option>Science</option>
+                    <option>Current Affairs</option>
+                    <option>Reasoning</option>
+                    <option>Maths</option>
+                    <option>English</option>
+                    <option>Telangana</option>
+                    <option>Banking</option>
+                    <option>Formula</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="input-label">Color</label>
+                <div class="color-picker" id="note-color-picker">
+                    <button class="color-btn active" data-color="#6366f1" style="background:#6366f1" onclick="setNoteColor('#6366f1')"></button>
+                    <button class="color-btn" data-color="#10b981" style="background:#10b981" onclick="setNoteColor('#10b981')"></button>
+                    <button class="color-btn" data-color="#f59e0b" style="background:#f59e0b" onclick="setNoteColor('#f59e0b')"></button>
+                    <button class="color-btn" data-color="#ef4444" style="background:#ef4444" onclick="setNoteColor('#ef4444')"></button>
+                    <button class="color-btn" data-color="#8b5cf6" style="background:#8b5cf6" onclick="setNoteColor('#8b5cf6')"></button>
+                    <button class="color-btn" data-color="#06b6d4" style="background:#06b6d4" onclick="setNoteColor('#06b6d4')"></button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('note-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveNote()">Save Note</button>
+        </div>
+    </div>
+</div>
+
+<!-- Notification Toast -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- Timer Alert Sound (inline) -->
+<audio id="timer-alert" preload="auto">
+    <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJiVkHBbW2mlo5p5ZGBzlpCOcV5hb42MjHpmZHOPjYx5bGlykoyNenNre5GKjHxyb3SQiIt8c3F4joiLfXVwdYuGioF4c3iKhYuDeHR4i4aLhHl1eoqFi4V6dn2IhYqGe3d/hYOJhnx4f4ODiYZ9eH+Cg4mGfXh+goSKhn14foKFiYd+en2AhoqHfnt7f4eJiH58e3+IiYl+fHt/iYqKgH57f4mLioF/e4CKi4qCgHuAiouJg4B8gIuMiYSBfYCMjYqFgn2AjI2KhoJ9gYyNi4aCfoGNjYuHg36CjY6Lh4N/go2OjIiEgIONjo2JhYGDjY6NiYWBhI6PjYqGgoSOkI6LhYOEj5CQjIYFhI+RkY2HBYSQkpKOiAaFkZOTj4kHhpKUlJCKCIeUlZSSiwoJlZaVk40JCpeXlpSPCguYmJeVkAsNmZmYlpIMDpqam5eUDQ+bm5uYlQ4Qm5ucmZcQEZycnJqYERGcnZ2amxISnJ2dmpsTE52enZudFBWfn56cnRUWoJ+fnJ0WF6Cgn52dFxihoJ+enRgZo6Kfn54ZGqOjn5+fGhuko6CgnxsbpaShoCeHR52WpKGioJ8dHpempaOjoZ4dH5inpqSlpp8hH5inpqWnpqGlI6KpoqMdoamop6epqKOkJaGspaKi"
+        type="audio/wav">
+</audio>
+
+<script src="script.js"></script>
+</body>
+</html>
