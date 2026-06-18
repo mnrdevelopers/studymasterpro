@@ -705,8 +705,8 @@ async function loadFromSupabase() {
             }));
         }
 
-        // User settings
-        const { data: settings } = await db.from('user_settings').select('*').eq('user_id', uid).single();
+        // User settings — use maybeSingle() so new users (no row yet) get null instead of a 406 error
+        const { data: settings } = await db.from('user_settings').select('*').eq('user_id', uid).maybeSingle();
         if (settings) {
             appState.settings = {
                 name: settings.name || 'Aspirant',
@@ -719,6 +719,7 @@ async function loadFromSupabase() {
             appState.timerState.pomodoroCount = settings.pomodoro_count || 0;
             appState.calendarData = settings.calendar_data || {};
         }
+
 
         // Persist to localStorage as offline cache
         saveState();
