@@ -10,21 +10,27 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="logo.png">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="logo.png">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
 <!-- ========== AUTH SCREEN ========== -->
-<div id="auth-screen" class="auth-screen">
+<div id="auth-screen" class="auth-screen hidden">
     <div class="auth-bg-glow"></div>
     <div class="auth-card">
         <div class="auth-logo">
             <div class="auth-logo-ring"></div>
-            <span class="auth-logo-icon">📚</span>
+            <img src="logo.png" class="auth-logo-img" alt="StudyMaster Pro Logo">
         </div>
         <h1 class="auth-title">StudyMaster Pro</h1>
         <p class="auth-subtitle">Your AI-powered exam preparation companion</p>
-
+        
         <div class="auth-tabs">
             <button class="auth-tab active" id="auth-tab-login" onclick="switchAuthTab('login')">Sign In</button>
             <button class="auth-tab" id="auth-tab-signup" onclick="switchAuthTab('signup')">Create Account</button>
@@ -58,11 +64,11 @@
 </div>
 
 <!-- ========== LOADING SCREEN ========== -->
-<div id="loading-screen" class="loading-screen" style="display:none">
+<div id="loading-screen" class="loading-screen">
     <div class="loader-content">
         <div class="loader-logo">
             <div class="logo-ring"></div>
-            <span class="logo-icon">📚</span>
+            <img src="logo.png" class="loader-logo-img" alt="StudyMaster Pro Loading">
         </div>
         <h2 class="loader-title">StudyMaster Pro</h2>
         <div class="loader-bar"><div class="loader-fill"></div></div>
@@ -71,13 +77,13 @@
 </div>
 
 <!-- ========== SIDEBAR ========== -->
-<nav class="sidebar" id="sidebar">
+<nav class="sidebar" id="sidebar" style="display:none">
     <div class="sidebar-header">
         <div class="brand">
-            <span class="brand-icon">📚</span>
+            <img src="logo.png" class="brand-logo-img" alt="StudyMaster Pro Logo">
             <span class="brand-name">StudyMaster<span class="brand-pro">Pro</span></span>
         </div>
-        <button class="sidebar-close" id="sidebar-close" aria-label="Close Sidebar">✕</button>
+        <button class="sidebar-close" id="sidebar-close" onclick="closeSidebar()" aria-label="Close Sidebar">✕</button>
     </div>
 
     <div class="sidebar-profile">
@@ -113,6 +119,10 @@
             <span class="nav-icon">📝</span>
             <span class="nav-label">Quick Notes</span>
         </li>
+        <li class="nav-item" data-section="ai" onclick="showSection('ai')">
+            <span class="nav-icon">✨</span>
+            <span class="nav-label">AI Assistant</span>
+        </li>
     </ul>
 
     <div class="sidebar-footer">
@@ -131,13 +141,14 @@
 <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
 
 <!-- ========== MAIN CONTENT ========== -->
-<main class="main-content" id="main-content">
+<main class="main-content" id="main-content" style="display:none">
 
     <!-- TOP BAR -->
     <header class="topbar">
         <button class="menu-btn" id="menu-btn" onclick="toggleSidebar()" aria-label="Toggle Menu">
             <span></span><span></span><span></span>
         </button>
+        <div class="topbar-brand"><img src="logo.png" class="topbar-logo-img" alt="StudyMaster Pro Logo">StudyMaster<span class="brand-pro">Pro</span></div>
         <div class="topbar-center">
             <div class="exam-selector-wrapper">
                 <label class="exam-label">Exam Mode:</label>
@@ -157,6 +168,21 @@
             <div class="date-display" id="date-display"></div>
             <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" aria-label="Toggle Theme" title="Toggle Dark/Light Mode">🌙</button>
             <button class="settings-btn" onclick="openSettings()" aria-label="Settings" title="Settings">⚙️</button>
+            <div class="notif-wrapper" id="notif-wrapper">
+                <button class="notif-bell-btn" id="notif-bell-btn" onclick="toggleNotifPanel()" aria-label="Notifications" title="Notifications">
+                    🔔
+                    <span class="notif-badge" id="notif-badge" style="display:none">0</span>
+                </button>
+                <div class="notif-panel" id="notif-panel">
+                    <div class="notif-panel-header">
+                        <span>🔔 Notifications</span>
+                        <button class="notif-clear-btn" onclick="clearAllNotifs()">× Clear</button>
+                    </div>
+                    <div class="notif-list" id="notif-list">
+                        <div class="notif-empty">🎉 All caught up!</div>
+                    </div>
+                </div>
+            </div>
         </div>
     </header>
 
@@ -256,7 +282,10 @@
                 <h1 class="section-title">📅 My Timetable</h1>
                 <p class="section-subtitle">Build and manage your personalized study schedule</p>
             </div>
-            <button class="btn btn-primary" onclick="openAddSessionModal()">+ Add Session</button>
+            <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+                <button class="btn btn-danger" onclick="clearCurrentTimetable()">🗑️ Clear Timetable</button>
+                <button class="btn btn-primary" onclick="openAddSessionModal()">+ Add Session</button>
+            </div>
         </div>
 
         <!-- Week Navigation -->
@@ -445,6 +474,166 @@
         </div>
         <div id="notes-grid" class="notes-grid"></div>
     </section>
+    
+    <!-- ======================== SECTION: AI ASSISTANT ======================== -->
+    <section class="section" id="section-ai">
+        <div class="section-header">
+            <div>
+                <h1 class="section-title">✨ AI Study Assistant</h1>
+                <p class="section-subtitle">Leverage AI to construct study sessions, parse timetables, and suggest weekly plans.</p>
+            </div>
+            <div class="ai-status-badge" id="ai-status-badge">
+                <span class="ai-status-dot"></span>
+                <span id="ai-status-text">AI Ready</span>
+            </div>
+        </div>
+
+        <div class="ai-layout">
+            <!-- Left Side: Control & Prompt -->
+            <div class="ai-left-pane">
+                <div class="card ai-card">
+                    <h3 class="card-title" style="margin-bottom:0.75rem;">🤖 Smart Command Parser</h3>
+                    <p style="font-size:0.83rem;color:var(--text-secondary);margin-bottom:1.25rem;">
+                        Type your study session details naturally. We'll automatically identify the subject, topic, time, and priority.
+                    </p>
+                    
+                    <div class="form-group">
+                        <label class="input-label">Describe Session Details</label>
+                        <textarea id="ai-prompt-input" class="textarea-input" rows="4" 
+                            placeholder="e.g., Schedule a 2 hour history session for Wednesday at 10 AM on American Revolution with High priority"></textarea>
+                    </div>
+
+                    <div class="ai-actions">
+                        <button class="btn btn-primary" id="btn-ai-parse" onclick="parseSessionWithAI()">
+                            <span>✨ Parse Session</span>
+                        </button>
+                        <button class="btn btn-secondary" id="btn-ai-weekly" onclick="generateWeeklyPlanWithAI()">
+                            <span>📅 Suggest Weekly Plan</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Suggested Timetable Presets -->
+                <div class="card ai-presets-card" style="margin-top:1.5rem;">
+                    <h3 class="card-title" style="margin-bottom:0.75rem;">💡 Recommended Study Presets</h3>
+                    <p style="font-size:0.83rem;color:var(--text-secondary);margin-bottom:1.25rem;">
+                        Quickly initialize your calendar with curated high-yield study programs and schedules.
+                    </p>
+                    <div style="display:flex;flex-direction:column;gap:0.75rem;">
+                        <button class="btn btn-secondary" onclick="importUPSC6HourPlan()" style="justify-content:space-between;width:100%;">
+                            <span>🏛️ UPSC 6-Hour Daily Strategy Plan</span>
+                            <span style="font-size:0.75rem;color:var(--text-accent);font-weight:700;">Load ⚡</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Suggested Weekly Plan Container -->
+                <div class="card ai-plan-card" id="ai-plan-card" style="display:none;margin-top:1.5rem;">
+                    <div class="card-header">
+                        <h3 class="card-title">📅 Suggested Weekly Study Plan</h3>
+                        <button class="btn btn-sm btn-primary" onclick="importAISuggestedPlan()">Import All</button>
+                    </div>
+                    <div id="ai-suggested-list" class="ai-suggested-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Side: Live Parser Preview -->
+            <div class="ai-right-pane">
+                <div class="card ai-preview-card" id="ai-preview-card">
+                    <div class="ai-glow-bg"></div>
+                    <h3 class="card-title" style="margin-bottom:1rem;position:relative;z-index:2;">✨ Live Parser Preview</h3>
+                    
+                    <div class="ai-preview-placeholder" id="ai-preview-placeholder">
+                        <span style="font-size:3rem;display:block;margin-bottom:1rem;">🤖</span>
+                        <p>Write a command or prompt on the left to view parsed results here</p>
+                    </div>
+
+                    <div class="ai-preview-content" id="ai-preview-content" style="display:none;position:relative;z-index:2;">
+                        <div class="ai-preview-item">
+                            <span class="preview-label">Subject</span>
+                            <div class="preview-val-badge" id="ai-preview-subject">Polity</div>
+                        </div>
+                        <div class="ai-preview-item">
+                            <span class="preview-label">Day of Week</span>
+                            <span class="preview-val" id="ai-preview-day">-</span>
+                        </div>
+                        <div class="ai-preview-item">
+                            <span class="preview-label">Time Interval</span>
+                            <span class="preview-val" id="ai-preview-time">-</span>
+                        </div>
+                        <div class="ai-preview-item">
+                            <span class="preview-label">Topic / Focus</span>
+                            <span class="preview-val" id="ai-preview-topic">-</span>
+                        </div>
+                        <div class="ai-preview-item">
+                            <span class="preview-label">Priority Level</span>
+                            <span class="preview-val" id="ai-preview-priority">-</span>
+                        </div>
+                        <div class="ai-preview-item">
+                            <span class="preview-label">Auto-Repeat</span>
+                            <span class="preview-val" id="ai-preview-repeat">-</span>
+                        </div>
+
+                        <button class="btn btn-primary" style="width:100%;margin-top:1.5rem;" onclick="addAIParsedSession()">
+                            <span>+ Save to Timetable</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ======================== STUDY PLAN TIMELINE ======================== -->
+        <div class="card timeline-section-card" style="margin-top:2rem;">
+            <div class="timeline-header-block">
+                <div>
+                    <h3 class="card-title" style="font-size:1.2rem;margin-bottom:0.25rem;">📅 Chronological Strategy Planner (1 July 2026 – 31 Jan 2027)</h3>
+                    <p style="font-size:0.83rem;color:var(--text-secondary);">
+                        Day-by-day customized topic mapping based on your 6-Hour/Day UPSC plan.
+                    </p>
+                </div>
+                <div class="timeline-controls-row">
+                    <button class="btn btn-secondary btn-sm" onclick="generateChronologicalTimeline(true)">
+                        <span>🔄 Reset / Initialize Timeline</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats Bar -->
+            <div class="timeline-stats-bar">
+                <div class="t-stat">
+                    <span class="t-stat-label">Progress</span>
+                    <strong class="t-stat-val" id="t-stat-progress">0%</strong>
+                </div>
+                <div class="t-stat">
+                    <span class="t-stat-label">Completed Days</span>
+                    <strong class="t-stat-val" id="t-stat-days">0 / 215 days</strong>
+                </div>
+                <div class="t-stat" style="flex:2;">
+                    <span class="t-stat-label">Current Focus</span>
+                    <strong class="t-stat-val" id="t-stat-focus" style="color:var(--text-accent);">Ethics GS4</strong>
+                </div>
+            </div>
+
+            <!-- Filter Row -->
+            <div class="timeline-filter-row">
+                <input type="text" id="timeline-search" class="search-input" placeholder="🔍 Search dates, subjects, or chapters..." oninput="renderTimelineList()">
+                <select id="timeline-status-filter" class="select-input" onchange="renderTimelineList()">
+                    <option value="all">All Days</option>
+                    <option value="uncompleted">Uncompleted</option>
+                    <option value="completed">Completed</option>
+                </select>
+            </div>
+
+            <!-- Days List Container -->
+            <div class="timeline-scroll-container">
+                <div class="timeline-days-list" id="ai-timeline-list">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </div>
+    </section>
 
 </main>
 
@@ -458,6 +647,11 @@
             <button class="modal-close" onclick="closeModal('session-modal')">✕</button>
         </div>
         <div class="modal-body">
+            <div id="session-modal-dynamic-info" class="card" style="display:none;background:rgba(99,102,241,0.08);border-color:rgba(99,102,241,0.25);margin-bottom:1.25rem;padding:0.875rem 1rem;overflow:visible;">
+                <div style="font-size:0.75rem;text-transform:uppercase;color:var(--text-accent);font-weight:700;margin-bottom:2px;letter-spacing:0.05em;">💡 Chronological Study Block</div>
+                <div style="font-size:0.83rem;font-weight:600;color:var(--text-primary);" id="session-modal-dynamic-text">Resolved topic here...</div>
+                <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:4px;">This is a system-scheduled block. To check off topics, please use the Chronological Strategy Planner in the AI Assistant tab.</div>
+            </div>
             <div class="form-group">
                 <label class="input-label">Subject *</label>
                 <select id="session-subject" class="select-input" required></select>
@@ -537,6 +731,11 @@
                 <label class="input-label">Exam Date (optional)</label>
                 <input type="date" id="settings-exam-date" class="text-input">
             </div>
+            <div class="form-group">
+                <label class="input-label">OpenRouter API Key (for Smart AI Assistant)</label>
+                <input type="password" id="settings-api-key" class="text-input" placeholder="Enter OpenRouter key (e.g. sk-or-...)">
+                <span style="font-size:0.75rem;color:var(--text-muted);display:block;margin-top:4px;">Stays local. Stored only in your browser storage. Get a free key at openrouter.ai</span>
+            </div>
         </div>
         <div class="modal-footer">
             <button class="btn btn-secondary" onclick="closeModal('settings-modal')">Cancel</button>
@@ -603,8 +802,7 @@
 
 <!-- Timer Alert Sound (inline) -->
 <audio id="timer-alert" preload="auto">
-    <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJiVkHBbW2mlo5p5ZGBzlpCOcV5hb42MjHpmZHOPjYx5bGlykoyNenNre5GKjHxyb3SQiIt8c3F4joiLfXVwdYuGioF4c3iKhYuDeHR4i4aLhHl1eoqFi4V6dn2IhYqGe3d/hYOJhnx4f4ODiYZ9eH+Cg4mGfXh+goSKhn14foKFiYd+en2AhoqHfnt7f4eJiH58e3+IiYl+fHt/iYqKgH57f4mLioF/e4CKi4qCgHuAiouJg4B8gIuMiYSBfYCMjYqFgn2AjI2KhoJ9gYyNi4aCfoGNjYuHg36CjY6Lh4N/go2OjIiEgIONjo2JhYGDjY6NiYWBhI6PjYqGgoSOkI6LhYOEj5CQjIYFhI+RkY2HBYSQkpKOiAaFkZOTj4kHhpKUlJCKCIeUlZSSiwoJlZaVk40JCpeXlpSPCguYmJeVkAsNmZmYlpIMDpqam5eUDQ+bm5uYlQ4Qm5ucmZcQEZycnJqYERGcnZ2amxISnJ2dmpsTE52enZudFBWfn56cnRUWoJ+fnJ0WF6Cgn52dFxihoJ+enRgZo6Kfn54ZGqOjn5+fGhuko6CgnxsbpaShoCeHR52WpKGioJ8dHpempaOjoZ4dH5inpqSlpp8hH5inpqWnpqGlI6KpoqMdoamop6epqKOkJaGspaKi"
-        type="audio/wav">
+    <source src="data:audio/wav;base64,UklGRl9vT19teleNlZUFCQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ4NAACAgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wA=" type="audio/wav">
 </audio>
 
 <script src="script.js"></script>

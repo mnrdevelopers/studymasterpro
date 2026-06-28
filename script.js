@@ -615,10 +615,13 @@ let appState = {
         exam: 'upsc',
         goal: 8,
         examDate: '',
+        geminiApiKey: localStorage.getItem('studymaster_gemini_key') || '',
     },
     completedSessions: {},
     timerInterval: null,
     calendarData: {}, // { 'YYYY-MM-DD': minutes }
+    timeline: [],
+    timelineCompleted: {}, // { dateStr: true/false }
 };
 
 // ============================================================
@@ -631,7 +634,10 @@ function setSyncStatus(status) {
     if (!dot || !label) return;
     dot.className = 'sync-dot';
     if (status === 'syncing') { dot.classList.add('syncing'); label.textContent = 'Syncing…'; }
-    else if (status === 'error') { dot.classList.add('error'); label.textContent = 'Offline'; }
+    else if (status === 'error') {
+        dot.classList.add('error'); label.textContent = 'Offline';
+        addInAppNotif('error', '❌ Sync failed — changes saved locally. Will retry on next action.');
+    }
     else { label.textContent = 'Synced'; } // green pulse by default
 }
 
@@ -713,6 +719,7 @@ async function loadFromSupabase() {
                 exam: settings.exam || 'upsc',
                 goal: settings.goal || 8,
                 examDate: settings.exam_date || '',
+                geminiApiKey: localStorage.getItem('studymaster_gemini_key') || '',
             };
             appState.streak = settings.streak || 0;
             appState.lastStudyDate = settings.last_study_date || null;
@@ -879,27 +886,44 @@ function getSubjectColor(subjectId) {
 // ============================================================
 // INITIALIZATION
 // ============================================================
+let appInitialized = false; // Guard: prevents initApp running more than once
+
 document.addEventListener('DOMContentLoaded', () => {
-    // Auth listener — runs once Supabase determines session state
+    // Auth listener — Supabase fires this on every page load to restore session
     db.auth.onAuthStateChange(async (event, session) => {
         currentUser = session?.user ?? null;
+
         if (currentUser) {
-            // User is logged in — show loading, load data, then show app
-            showLoadingScreen('Syncing your study data...');
-            await loadFromSupabase();
-            hideAuthScreen();
-            hideLoadingScreen();
-            initApp();
-            // Show user email in sidebar
-            const emailEl = document.getElementById('sidebar-user-email');
-            if (emailEl) emailEl.textContent = currentUser.email;
+            if (!appInitialized) {
+                // First time: load data then launch app
+                showLoadingScreen('Syncing your study data...');
+                loadState();
+                await loadFromSupabase();
+                hideAuthScreen();
+                hideLoadingScreen();
+                initApp();
+                appInitialized = true;
+
+                // Show user email in sidebar
+                const emailEl = document.getElementById('sidebar-user-email');
+                if (emailEl) emailEl.textContent = currentUser.email;
+
+                // Request browser notification permission after login
+                if ('Notification' in window && Notification.permission === 'default') {
+                    setTimeout(() => Notification.requestPermission(), 3000);
+                }
+
+                // Welcome back notification
+                addInAppNotif('info', `👋 Welcome back! Data synced successfully.`);
+            }
         } else {
-            // Not logged in — show auth screen
+            // Signed out or no session — show auth screen
+            appInitialized = false;
             showAuthScreen();
         }
     });
 
-    // Keyboard: allow Enter key on auth inputs
+    // Enter-key support on auth inputs
     document.getElementById('auth-password')?.addEventListener('keydown', e => {
         if (e.key === 'Enter') handleAuthSubmit();
     });
@@ -908,6 +932,23 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.getElementById('auth-email')?.addEventListener('keydown', e => {
         if (e.key === 'Enter') document.getElementById('auth-password')?.focus();
+    });
+
+    // Close notification panel when clicking outside
+    document.addEventListener('click', e => {
+        const wrapper = document.getElementById('notif-wrapper');
+        if (wrapper && !wrapper.contains(e.target)) {
+            document.getElementById('notif-panel')?.classList.remove('open');
+        }
+    });
+
+    // Hashchange listener for URL router
+    window.addEventListener('hashchange', () => {
+        const section = window.location.hash.substring(1);
+        const validSections = ['dashboard', 'timetable', 'syllabus', 'progress', 'timer', 'notes', 'ai'];
+        if (validSections.includes(section) && appState.currentSection !== section) {
+            showSection(section);
+        }
     });
 });
 
@@ -933,19 +974,36 @@ function initApp() {
     refreshQuote();
     renderCountdownBanner();
     populateNoteTagFilter();
+    renderTimelineList();
+    
+    // Hash routing initialization
+    const initialSection = window.location.hash.substring(1) || appState.currentSection || 'dashboard';
+    showSection(initialSection);
 }
 
 // ============================================================
 // NAVIGATION
 // ============================================================
 function showSection(name) {
+    const validSections = ['dashboard', 'timetable', 'syllabus', 'progress', 'timer', 'notes', 'ai'];
+    if (!validSections.includes(name)) name = 'dashboard';
+
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    
     const sec = document.getElementById(`section-${name}`);
     if (sec) sec.classList.add('active');
+    
     const navItem = document.querySelector(`.nav-item[data-section="${name}"]`);
     if (navItem) navItem.classList.add('active');
+    
     appState.currentSection = name;
+    
+    // Update hash router
+    if (window.location.hash !== '#' + name) {
+        window.location.hash = name;
+    }
+    
     if (name === 'timetable') renderTimetableGrid();
     if (name === 'syllabus') renderSyllabus();
     if (name === 'progress') { renderExamProgressBars(); renderStudyLog(); renderCalendarHeatmap(); }
@@ -980,6 +1038,7 @@ function openSettings() {
     document.getElementById('settings-exam').value = appState.settings.exam;
     document.getElementById('settings-goal').value = appState.settings.goal;
     document.getElementById('settings-exam-date').value = appState.settings.examDate || '';
+    document.getElementById('settings-api-key').value = appState.settings.geminiApiKey || '';
     openModal('settings-modal');
 }
 
@@ -988,6 +1047,9 @@ function saveSettings() {
     appState.settings.exam = document.getElementById('settings-exam').value;
     appState.settings.goal = parseInt(document.getElementById('settings-goal').value) || 8;
     appState.settings.examDate = document.getElementById('settings-exam-date').value;
+    const apiKey = document.getElementById('settings-api-key').value.trim();
+    appState.settings.geminiApiKey = apiKey;
+    localStorage.setItem('studymaster_gemini_key', apiKey);
     applySettings();
     saveState();
     syncUserSettings();
@@ -1100,6 +1162,7 @@ function getWeekMinutes() {
 // ============================================================
 function renderTodaySchedule() {
     const today = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+    const todayStr = getDateStr();
     const todaySessions = appState.sessions.filter(s =>
         s.day === today && s.exam === appState.currentExam
     );
@@ -1112,14 +1175,39 @@ function renderTodaySchedule() {
 
     todaySessions.sort((a, b) => a.start.localeCompare(b.start));
     list.innerHTML = todaySessions.map(s => {
-        const color = getSubjectColor(s.subject);
         const done = appState.completedSessions[s.id] || false;
+        
+        let displaySubject = s.subject;
+        let displayTopic = s.topic;
+        if (appState.timeline && appState.timeline.length > 0) {
+            const timelineDay = appState.timeline.find(td => td.date === todayStr);
+            if (timelineDay) {
+                if (s.start === "04:00" && timelineDay.morning) {
+                    displayTopic = timelineDay.morning.desc;
+                    displaySubject = timelineDay.morning.subject;
+                } else if (s.start === "05:45" && timelineDay.optionalMorning) {
+                    displayTopic = timelineDay.optionalMorning.desc;
+                    displaySubject = timelineDay.optionalMorning.subject;
+                } else if (s.start === "19:30" && timelineDay.evening1) {
+                    displayTopic = timelineDay.evening1.desc;
+                    displaySubject = timelineDay.evening1.subject;
+                } else if (s.start === "20:45" && timelineDay.evening2) {
+                    displayTopic = timelineDay.evening2.desc;
+                    displaySubject = timelineDay.evening2.subject;
+                } else if (s.start === "21:30" && timelineDay.test) {
+                    displayTopic = timelineDay.test.desc;
+                    displaySubject = timelineDay.test.subject;
+                }
+            }
+        }
+        const color = getSubjectColor(displaySubject);
+
         return `
         <div class="today-item" onclick="toggleSessionDone('${s.id}')">
             <div class="today-item-color" style="background:${color}"></div>
             <div class="today-item-info">
-                <div class="today-item-subject">${getSubjectName(s.subject)}</div>
-                <div class="today-item-time">${s.start} – ${s.end} ${s.topic ? '| ' + s.topic : ''}</div>
+                <div class="today-item-subject">${getSubjectName(displaySubject)}</div>
+                <div class="today-item-time">${s.start} – ${s.end} ${displayTopic ? '| ' + displayTopic : ''}</div>
             </div>
             <div class="today-item-check ${done ? 'done' : ''}">${done ? '✓' : ''}</div>
         </div>`;
@@ -1149,6 +1237,7 @@ function toggleSessionDone(id) {
             syncUserSettings(); // update streak + calendarData
         }
         showToast(`✅ ${getSubjectName(session.subject)} session marked done!`, 'success');
+        addInAppNotif('success', `✅ ${getSubjectName(session.subject)} – ${session.start}–${session.end} completed!`);
     }
     saveState();
     renderTodaySchedule();
@@ -1164,7 +1253,13 @@ function updateStreak() {
     const yesterday = getDateStr(new Date(Date.now() - 86400000));
     if (appState.lastStudyDate === yesterday) {
         appState.streak++;
+        if (appState.streak % 5 === 0) {
+            addInAppNotif('success', `🔥 ${appState.streak}-Day Streak! You're on fire! Keep going!`);
+        }
     } else {
+        if (appState.streak > 0) {
+            addInAppNotif('warning', `⚠️ Streak reset. A new streak starts today — you got this!`);
+        }
         appState.streak = 1;
     }
     appState.lastStudyDate = today;
@@ -1172,7 +1267,6 @@ function updateStreak() {
 }
 
 function updateStreakDisplay() {
-    const val = `🔥 ${appState.streak} Day Streak`;
     document.getElementById('streak-display').textContent = `${appState.streak} Day Streak`;
     document.getElementById('stat-streak').textContent = appState.streak;
 }
@@ -1186,10 +1280,12 @@ function renderSubjectProgress() {
     if (!exam) return;
 
     list.innerHTML = exam.subjects.map(sub => {
-        const paper = exam.papers.find(p => p.id.startsWith(sub.id.split('-')[0] + '-' + sub.id.split('-')[1]));
-        // Calculate progress from topic progress
+        // Filter papers that belong to this subject by matching the subject id prefix
+        const subPrefix = sub.id; // e.g. 'upsc-gs1'
+        const relatedPapers = exam.papers.filter(p => p.id.startsWith(subPrefix));
+        // Calculate progress from topic progress for this subject's papers only
         let done = 0, total = 0;
-        exam.papers.forEach(p => {
+        relatedPapers.forEach(p => {
             p.topics.forEach(t => {
                 const key = `${p.id}_${t}`;
                 total++;
@@ -1238,7 +1334,7 @@ function renderWeeklyHeatmap() {
 // ============================================================
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const TIME_SLOTS = [];
-for (let h = 5; h <= 22; h++) {
+for (let h = 4; h <= 22; h++) {
     TIME_SLOTS.push(`${h.toString().padStart(2, '0')}:00`);
 }
 
@@ -1253,38 +1349,116 @@ function renderTimetableGrid() {
     const weekLabel = weekOffset === 0 ? 'This Week' : weekOffset < 0 ? `${Math.abs(weekOffset)} Week(s) Ago` : `In ${weekOffset} Week(s)`;
     document.getElementById('week-label').textContent = weekLabel;
 
+    // Calculate Monday of the viewed week to map dates
+    const currentDayOfWeek = now.getDay();
+    const distanceToMonday = currentDayOfWeek === 0 ? -6 : 1 - currentDayOfWeek;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + distanceToMonday);
+
     let html = '';
     // Header row
     html += `<div class="tt-header" style="background:var(--bg-surface)">Time</div>`;
-    DAYS.forEach(day => {
+    DAYS.forEach((day, dayIdx) => {
         const isToday = day === today;
-        html += `<div class="tt-header ${isToday ? 'today-col' : ''}">${day.slice(0, 3)}${isToday ? ' ✦' : ''}</div>`;
+        const colDate = new Date(monday);
+        colDate.setDate(monday.getDate() + dayIdx);
+        const dayLabel = colDate.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+        html += `<div class="tt-header ${isToday ? 'today-col' : ''}">${day.slice(0, 3)}<br><span style="font-size:0.68rem;font-weight:normal;opacity:0.7;">${dayLabel}</span>${isToday ? ' ✦' : ''}</div>`;
     });
+
+    // Track spanned rows for each day column to skip rendering overlapping cells
+    const spannedRows = { Monday: 0, Tuesday: 0, Wednesday: 0, Thursday: 0, Friday: 0, Saturday: 0, Sunday: 0 };
 
     // Time rows
     TIME_SLOTS.forEach(time => {
+        const slotHour = parseInt(time.split(':')[0]);
         html += `<div class="tt-time">${time}</div>`;
-        DAYS.forEach(day => {
+        DAYS.forEach((day, dayIdx) => {
             const isToday = day === today;
-            const sessionsHere = appState.sessions.filter(s =>
-                s.day === day &&
-                s.exam === appState.currentExam &&
-                s.start <= time && s.end > time
-            );
-            const sessionsStart = appState.sessions.filter(s =>
-                s.day === day &&
-                s.exam === appState.currentExam &&
-                s.start === time
-            );
-            const sessionContent = sessionsStart.map(s => {
-                const color = getSubjectColor(s.subject);
-                const done = appState.completedSessions[s.id];
-                return `<div class="tt-session" style="background:${color};opacity:${done ? 0.6 : 1}" onclick="editSession('${s.id}')">
-                    <span>${getSubjectName(s.subject)}</span>
-                    <span class="tt-session-time">${s.start}–${s.end}</span>
-                </div>`;
-            }).join('');
-            html += `<div class="tt-cell ${isToday ? 'today-col' : ''}">${sessionContent}</div>`;
+            
+            // If this cell was spanned by a session starting in a previous hour slot, skip rendering
+            if (spannedRows[day] > 0) {
+                spannedRows[day]--;
+                return;
+            }
+            
+            // Get dateStr for this cell
+            const colDate = new Date(monday);
+            colDate.setDate(monday.getDate() + dayIdx);
+            const year = colDate.getFullYear();
+            const month = String(colDate.getMonth() + 1).padStart(2, '0');
+            const dateNum = String(colDate.getDate()).padStart(2, '0');
+            const dateStr = `${year}-${month}-${dateNum}`;
+
+            // Match sessions that start exactly within this hour slot
+            const sessionsStart = appState.sessions.filter(s => {
+                if (s.day !== day || s.exam !== appState.currentExam) return false;
+                const startHour = parseInt(s.start.split(':')[0]);
+                return startHour === slotHour;
+            });
+            
+            if (sessionsStart.length > 0) {
+                // Find start hours of other sessions starting later today
+                const daySessions = appState.sessions.filter(s => s.day === day && s.exam === appState.currentExam);
+                const laterStartHours = daySessions
+                    .map(s => parseInt(s.start.split(':')[0]))
+                    .filter(h => h > slotHour);
+                const nextStartHour = laterStartHours.length > 0 ? Math.min(...laterStartHours) : Infinity;
+                const allowedSpan = nextStartHour - slotHour;
+
+                // Find the maximum span (in hours) of the starting sessions
+                let maxSpan = 1;
+                sessionsStart.forEach(s => {
+                    const startHour = parseInt(s.start.split(':')[0]);
+                    const endHour = parseInt(s.end.split(':')[0]);
+                    const normalSpan = Math.max(1, (endHour - startHour) + 1);
+                    const span = Math.min(normalSpan, allowedSpan);
+                    if (span > maxSpan) maxSpan = span;
+                });
+                
+                // Set the spanned rows counter to skip the next (maxSpan - 1) rows
+                spannedRows[day] = maxSpan - 1;
+
+                const sessionContent = sessionsStart.map(s => {
+                    const done = appState.completedSessions[s.id];
+                    
+                    // Lookup chronological topic and subject for this date and time slot
+                    let displaySubject = s.subject;
+                    let displayTopic = s.topic;
+                    if (appState.timeline && appState.timeline.length > 0) {
+                        const timelineDay = appState.timeline.find(td => td.date === dateStr);
+                        if (timelineDay) {
+                            if (s.start === "04:00" && timelineDay.morning) {
+                                displayTopic = timelineDay.morning.desc;
+                                displaySubject = timelineDay.morning.subject;
+                            } else if (s.start === "05:45" && timelineDay.optionalMorning) {
+                                displayTopic = timelineDay.optionalMorning.desc;
+                                displaySubject = timelineDay.optionalMorning.subject;
+                            } else if (s.start === "19:30" && timelineDay.evening1) {
+                                displayTopic = timelineDay.evening1.desc;
+                                displaySubject = timelineDay.evening1.subject;
+                            } else if (s.start === "20:45" && timelineDay.evening2) {
+                                displayTopic = timelineDay.evening2.desc;
+                                displaySubject = timelineDay.evening2.subject;
+                            } else if (s.start === "21:30" && timelineDay.test) {
+                                displayTopic = timelineDay.test.desc;
+                                displaySubject = timelineDay.test.subject;
+                            }
+                        }
+                    }
+                    const color = getSubjectColor(displaySubject);
+
+                    return `<div class="tt-session" style="background:${color};opacity:${done ? 0.6 : 1};height:100%;display:flex;flex-direction:column;justify-content:center;margin:0;" onclick="editSession('${s.id}', '${dateStr}')">
+                        <span>${getSubjectName(displaySubject)}</span>
+                        <span class="tt-session-topic" style="font-size:0.7rem;opacity:0.87;display:block;margin:3px 0;font-weight:normal;line-height:1.2;">${displayTopic || ''}</span>
+                        <span class="tt-session-time">${s.start}–${s.end}</span>
+                    </div>`;
+                }).join('');
+
+                html += `<div class="tt-cell ${isToday ? 'today-col' : ''}" style="grid-column:${dayIdx + 2}; grid-row:span ${maxSpan}; display:flex; flex-direction:column; justify-content:stretch; padding:4px; height:auto;">${sessionContent}</div>`;
+            } else {
+                html += `<div class="tt-cell ${isToday ? 'today-col' : ''}" style="grid-column:${dayIdx + 2};"></div>`;
+            }
         });
     });
 
@@ -1325,6 +1499,13 @@ function populateSubjectSelects() {
 
 function openAddSessionModal(dayPrefill = '') {
     appState.editingSession = null;
+    
+    // Hide dynamic info banner and delete button
+    const dynInfo = document.getElementById('session-modal-dynamic-info');
+    if (dynInfo) dynInfo.style.display = 'none';
+    const delBtn = document.getElementById('session-delete-btn');
+    if (delBtn) delBtn.style.display = 'none';
+    
     document.getElementById('session-modal-title').textContent = 'Add Study Session';
     document.getElementById('session-subject').value = EXAM_SYLLABI[appState.currentExam]?.subjects[0]?.id || '';
     document.getElementById('session-day').value = dayPrefill || new Date().toLocaleDateString('en-US', { weekday: 'long' });
@@ -1336,18 +1517,65 @@ function openAddSessionModal(dayPrefill = '') {
     openModal('session-modal');
 }
 
-function editSession(id) {
+function editSession(id, dateStr = '') {
     const session = appState.sessions.find(s => s.id === id);
     if (!session) return;
     appState.editingSession = id;
+    
+    // Check if this is a dynamic chronological block and resolve details
+    const dynInfo = document.getElementById('session-modal-dynamic-info');
+    const dynText = document.getElementById('session-modal-dynamic-text');
+    let isDynamic = false;
+    let displaySubject = session.subject;
+    let displayTopic = session.topic;
+    
+    if (dateStr && appState.timeline && appState.timeline.length > 0) {
+        const timelineDay = appState.timeline.find(td => td.date === dateStr);
+        if (timelineDay) {
+            if (session.start === "04:00" && timelineDay.morning) {
+                displayTopic = timelineDay.morning.desc;
+                displaySubject = timelineDay.morning.subject;
+                isDynamic = true;
+            } else if (session.start === "05:45" && timelineDay.optionalMorning) {
+                displayTopic = timelineDay.optionalMorning.desc;
+                displaySubject = timelineDay.optionalMorning.subject;
+                isDynamic = true;
+            } else if (session.start === "19:30" && timelineDay.evening1) {
+                displayTopic = timelineDay.evening1.desc;
+                displaySubject = timelineDay.evening1.subject;
+                isDynamic = true;
+            } else if (session.start === "20:45" && timelineDay.evening2) {
+                displayTopic = timelineDay.evening2.desc;
+                displaySubject = timelineDay.evening2.subject;
+                isDynamic = true;
+            } else if (session.start === "21:30" && timelineDay.test) {
+                displayTopic = timelineDay.test.desc;
+                displaySubject = timelineDay.test.subject;
+                isDynamic = true;
+            }
+        }
+    }
+    
+    if (isDynamic && dynInfo && dynText) {
+        dynText.textContent = `${getSubjectName(displaySubject)} — ${displayTopic}`;
+        dynInfo.style.display = 'block';
+    } else if (dynInfo) {
+        dynInfo.style.display = 'none';
+    }
+    
     document.getElementById('session-modal-title').textContent = 'Edit Session';
-    document.getElementById('session-subject').value = session.subject;
+    document.getElementById('session-subject').value = displaySubject;
     document.getElementById('session-day').value = session.day;
     document.getElementById('session-start').value = session.start;
     document.getElementById('session-end').value = session.end;
-    document.getElementById('session-topic').value = session.topic || '';
+    document.getElementById('session-topic').value = displayTopic || '';
     document.getElementById('session-repeat').value = session.repeat || 'none';
     setPriority(session.priority || 'medium');
+    
+    // Show delete button
+    const delBtn = document.getElementById('session-delete-btn');
+    if (delBtn) delBtn.style.display = 'inline-block';
+    
     openModal('session-modal');
 }
 
@@ -1401,10 +1629,16 @@ function saveSession() {
 }
 
 function deleteSession(id) {
-    const session = appState.sessions.find(s => s.id === id);
-    appState.sessions = appState.sessions.filter(s => s.id !== id);
+    const targetId = id || appState.editingSession;
+    if (!targetId) return;
+
+    if (!confirm('Are you sure you want to delete this study session template?')) return;
+
+    const session = appState.sessions.find(s => s.id === targetId);
+    appState.sessions = appState.sessions.filter(s => s.id !== targetId);
     saveState();
     if (session) syncSession(session, true);
+    closeModal('session-modal');
     renderTimetableGrid();
     renderTodaySchedule();
     renderSessionList();
@@ -1666,9 +1900,6 @@ function toggleTimer() {
         document.getElementById('timer-start').textContent = '⏸ Pause';
         appState.timerInterval = setInterval(() => {
             appState.timerState.timeLeft--;
-            if (appState.timerState.mode === 'focus') {
-                appState.timerState.sessionMinutes++;
-            }
             updateTimerDisplay();
             updateTimerRing();
             if (appState.timerState.timeLeft <= 0) {
@@ -1710,15 +1941,18 @@ function timerComplete() {
         }
         updateStreak();
         showToast(`🍅 Pomodoro #${appState.timerState.pomodoroCount} complete! Take a break.`, 'success');
+        addInAppNotif('success', `🍅 Pomodoro #${appState.timerState.pomodoroCount} done! ${mins} min of focused study logged.`);
 
         // Auto switch to break
         if (appState.timerState.pomodoroCount % 4 === 0) {
             setTimerMode('long');
+            addInAppNotif('info', '☕ Time for a long break — you\'ve done 4 pomodoros!');
         } else {
             setTimerMode('short');
         }
     } else {
         showToast('Break over! Ready to focus again. 💪', 'info');
+        addInAppNotif('info', '⏰ Break over! Jump back into focus mode.');
         setTimerMode('focus');
     }
 
@@ -1771,10 +2005,7 @@ function updateTimerStats() {
     document.getElementById('ts-total-pomo').textContent = appState.timerState.pomodoroCount;
 }
 
-// Request notification permission
-if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
-}
+// Notification permission is requested after login (see onAuthStateChange)
 
 // ============================================================
 // NOTES
@@ -1991,14 +2222,17 @@ function exportData() {
 // ============================================================
 // INITIAL TIMER RENDER
 // ============================================================
-updateTimerDisplay();
-updateTimerStats();
+// Timer display is initialized inside initApp() after DOM is ready
 
 // ============================================================
 // SERVICE WORKER (for offline) - Optional
 // ============================================================
 if ('serviceWorker' in navigator) {
-    // Silently skip if not available
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('ServiceWorker registered successfully.', reg))
+            .catch(err => console.error('ServiceWorker registration failed:', err));
+    });
 }
 
 // ============================================================
@@ -2054,22 +2288,29 @@ console.log('Shortcuts: Ctrl+N (New Session), Ctrl+T (Timetable), Ctrl+D (Dashbo
 // AUTH SCREEN HELPERS
 // ============================================================
 function showAuthScreen() {
+    hideLoadingScreen();
     const auth = document.getElementById('auth-screen');
     const main = document.getElementById('main-content');
     const sidebar = document.getElementById('sidebar');
     if (auth) auth.classList.remove('hidden');
     if (main) main.style.display = 'none';
     if (sidebar) sidebar.style.display = 'none';
-    document.getElementById('auth-email')?.focus();
+    // Reset form
+    const emailEl = document.getElementById('auth-email');
+    if (emailEl) { emailEl.value = ''; emailEl.focus(); }
+    const pwEl = document.getElementById('auth-password');
+    if (pwEl) pwEl.value = '';
+    clearAuthMessages();
 }
 
 function hideAuthScreen() {
+    hideLoadingScreen();
     const auth = document.getElementById('auth-screen');
     const main = document.getElementById('main-content');
     const sidebar = document.getElementById('sidebar');
     if (auth) auth.classList.add('hidden');
-    if (main) main.style.display = '';
-    if (sidebar) sidebar.style.display = '';
+    if (main) main.style.display = 'flex';
+    if (sidebar) sidebar.style.display = 'flex';
 }
 
 function showLoadingScreen(msg = 'Loading...') {
@@ -2083,7 +2324,7 @@ function hideLoadingScreen() {
     setTimeout(() => {
         const ls = document.getElementById('loading-screen');
         if (ls) ls.style.display = 'none';
-    }, 800);
+    }, 600);
 }
 
 // ============================================================
@@ -2165,6 +2406,7 @@ async function handleSignOut() {
     if (!confirm('Sign out of StudyMaster Pro?')) return;
     await db.auth.signOut();
     currentUser = null;
+    appInitialized = false;
     // Reset app state
     appState.sessions = [];
     appState.notes = [];
@@ -2172,6 +2414,980 @@ async function handleSignOut() {
     appState.studyLog = [];
     appState.calendarData = {};
     appState.streak = 0;
+    inAppNotifs = [];
     showAuthScreen();
     showToast('Signed out successfully.', 'info');
 }
+
+// ============================================================
+// IN-APP NOTIFICATION SYSTEM
+// ============================================================
+let inAppNotifs = []; // { id, type, message, time, read }
+
+function addInAppNotif(type, message) {
+    // type: 'info' | 'success' | 'warning' | 'error'
+    const notif = {
+        id: Date.now(),
+        type,
+        message,
+        time: new Date(),
+        read: false,
+    };
+    inAppNotifs.unshift(notif);
+    if (inAppNotifs.length > 30) inAppNotifs = inAppNotifs.slice(0, 30);
+    renderNotifPanel();
+    updateNotifBadge();
+
+    // Also fire a browser notification if permitted
+    if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+            new Notification('StudyMaster Pro', {
+                body: message.replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim(),
+                icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>'
+            });
+        } catch (e) { }
+    }
+}
+
+function renderNotifPanel() {
+    const list = document.getElementById('notif-list');
+    if (!list) return;
+    if (!inAppNotifs.length) {
+        list.innerHTML = '<div class="notif-empty">🎉 All caught up!</div>';
+        return;
+    }
+    const icons = { info: 'ℹ️', success: '✅', warning: '⚠️', error: '❌' };
+    list.innerHTML = inAppNotifs.map(n => {
+        const timeStr = n.time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+        return `
+        <div class="notif-item ${n.type} ${n.read ? 'read' : ''}" onclick="markNotifRead(${n.id})">
+            <span class="notif-icon">${icons[n.type] || '🔔'}</span>
+            <div class="notif-body">
+                <div class="notif-msg">${n.message}</div>
+                <div class="notif-time">${timeStr}</div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function markNotifRead(id) {
+    const n = inAppNotifs.find(x => x.id === id);
+    if (n) n.read = true;
+    updateNotifBadge();
+    renderNotifPanel();
+}
+
+function updateNotifBadge() {
+    const badge = document.getElementById('notif-badge');
+    const unread = inAppNotifs.filter(n => !n.read).length;
+    if (badge) {
+        badge.textContent = unread > 9 ? '9+' : unread;
+        badge.style.display = unread > 0 ? 'flex' : 'none';
+    }
+}
+
+function toggleNotifPanel() {
+    const panel = document.getElementById('notif-panel');
+    if (!panel) return;
+    const isOpen = panel.classList.toggle('open');
+    if (isOpen) {
+        // Mark all as read when opened
+        inAppNotifs.forEach(n => n.read = true);
+        updateNotifBadge();
+        renderNotifPanel();
+    }
+}
+
+function clearAllNotifs() {
+    inAppNotifs = [];
+    renderNotifPanel();
+    updateNotifBadge();
+}
+
+function toggleNotifPanel() {
+    const panel = document.getElementById('notif-panel');
+    if (!panel) return;
+    const isOpen = panel.classList.toggle('open');
+    if (isOpen) {
+        // Mark all as read when opened
+        inAppNotifs.forEach(n => n.read = true);
+        updateNotifBadge();
+        renderNotifPanel();
+    }
+}
+
+function clearAllNotifs() {
+    inAppNotifs = [];
+    renderNotifPanel();
+    updateNotifBadge();
+}
+
+// ============================================================
+// AI STUDY ASSISTANT CONTROLLER LOGIC
+// ============================================================
+let lastParsedAISession = null;
+let suggestedAISessions = [];
+
+function setAIStatus(status, text) {
+    const badge = document.getElementById('ai-status-badge');
+    const label = document.getElementById('ai-status-text');
+    if (!badge || !label) return;
+    
+    if (status === 'loading') {
+        badge.classList.add('loading');
+    } else {
+        badge.classList.remove('loading');
+    }
+    label.textContent = text;
+}
+
+// Helper to call OpenRouter API (using free models)
+async function callGeminiAPI(prompt, systemInstruction) {
+    const key = appState.settings.geminiApiKey;
+    if (!key) throw new Error("No API Key configured.");
+    
+    const url = "https://openrouter.ai/api/v1/chat/completions";
+    const models = [
+        "meta-llama/llama-3-8b-instruct:free",
+        "openrouter/free"
+    ];
+    
+    let lastError = null;
+    
+    for (const model of models) {
+        try {
+            const bodyObj = {
+                model: model,
+                messages: [
+                    { role: "system", content: systemInstruction },
+                    { role: "user", content: prompt }
+                ]
+            };
+            
+            // Only use json_object response format for specific models known to support it
+            if (model !== "openrouter/free") {
+                bodyObj.response_format = { type: "json_object" };
+            }
+            
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${key}`
+                },
+                body: JSON.stringify(bodyObj)
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                let txt = data?.choices?.[0]?.message?.content;
+                if (!txt) throw new Error("Empty response from AI.");
+                
+                // Sanitize potential markdown code blocks wrapped in response
+                txt = txt.trim();
+                if (txt.startsWith("```")) {
+                    txt = txt.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+                }
+                return JSON.parse(txt);
+            } else {
+                const errData = await response.json().catch(() => ({}));
+                lastError = new Error(errData?.error?.message || `API request failed with status ${response.status}`);
+            }
+        } catch (e) {
+            lastError = e;
+        }
+    }
+    
+    throw lastError || new Error("Failed to communicate with OpenRouter API.");
+}
+
+// Smart Local Fallback Parser using regex and keyword matching
+function localFallbackParser(prompt) {
+    const cleanPrompt = prompt.toLowerCase();
+    const exam = appState.currentExam;
+    const syllabi = EXAM_SYLLABI[exam];
+    if (!syllabi) return null;
+
+    // 1. Identify Subject
+    let subjectId = syllabi.subjects[0]?.id; // default
+    let score = -1;
+    syllabi.subjects.forEach(sub => {
+        const subNameWords = sub.name.toLowerCase().split(/\s+/);
+        let matchCount = 0;
+        subNameWords.forEach(w => {
+            if (w.length > 3 && cleanPrompt.includes(w)) matchCount++;
+        });
+        // check direct ID/short tags matching
+        const shortTag = sub.id.split('-')[1] || '';
+        if (shortTag && cleanPrompt.includes(shortTag)) matchCount += 3;
+        
+        if (matchCount > score) {
+            score = matchCount;
+            subjectId = sub.id;
+        }
+    });
+
+    // 2. Identify Day
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    let day = days[new Date().getDay() - 1] || 'Monday'; // default to today
+    days.forEach(d => {
+        if (cleanPrompt.includes(d.toLowerCase())) day = d;
+    });
+
+    // 3. Identify Time
+    let start = "08:00";
+    let end = "09:00";
+    
+    // Check for HH:MM to HH:MM format
+    const timeRangeRegex = /(\d{1,2}):(\d{2})\s*(am|pm)?\s*(?:to|and|-)\s*(\d{1,2}):(\d{2})\s*(am|pm)?/i;
+    const matchRange = prompt.match(timeRangeRegex);
+    if (matchRange) {
+        let sh = parseInt(matchRange[1]);
+        const sm = matchRange[2];
+        const sAmPm = matchRange[3];
+        let eh = parseInt(matchRange[4]);
+        const em = matchRange[5];
+        const eAmPm = matchRange[6];
+        
+        if (sAmPm && sAmPm.toLowerCase() === 'pm' && sh < 12) sh += 12;
+        if (sAmPm && sAmPm.toLowerCase() === 'am' && sh === 12) sh = 0;
+        if (eAmPm && eAmPm.toLowerCase() === 'pm' && eh < 12) eh += 12;
+        if (eAmPm && eAmPm.toLowerCase() === 'am' && eh === 12) eh = 0;
+        
+        start = `${sh.toString().padStart(2, '0')}:${sm}`;
+        end = `${eh.toString().padStart(2, '0')}:${em}`;
+    } else {
+        // Look for single time and default 1 hour duration
+        const singleTimeRegex = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i;
+        const matchSingle = prompt.match(singleTimeRegex);
+        if (matchSingle) {
+            let sh = parseInt(matchSingle[1]);
+            const sm = matchSingle[2] || "00";
+            const ampm = matchSingle[3].toLowerCase();
+            
+            if (ampm === 'pm' && sh < 12) sh += 12;
+            if (ampm === 'am' && sh === 12) sh = 0;
+            
+            start = `${sh.toString().padStart(2, '0')}:${sm}`;
+            let eh = sh + 1;
+            if (eh >= 24) eh = 0;
+            end = `${eh.toString().padStart(2, '0')}:${sm}`;
+        }
+    }
+
+    // 4. Identify Priority
+    let priority = "medium";
+    if (cleanPrompt.includes("high") || cleanPrompt.includes("urgent") || cleanPrompt.includes("important")) priority = "high";
+    else if (cleanPrompt.includes("low") || cleanPrompt.includes("easy")) priority = "low";
+
+    // 5. Extract Topic
+    let topic = "";
+    const topicKeywords = ["topic", "about", "on", "focusing on", "studying"];
+    for (const keyword of topicKeywords) {
+        const index = cleanPrompt.indexOf(keyword);
+        if (index !== -1) {
+            topic = prompt.substring(index + keyword.length).trim();
+            // clean punctuation
+            topic = topic.replace(/^(is|on|about|of|study|a)\s+/i, '').split(/[.,;]/)[0].trim();
+            break;
+        }
+    }
+    if (!topic) {
+        topic = prompt.split(/at|on|for/)[0].trim();
+        if (topic.length > 50) topic = topic.substring(0, 50) + "...";
+    }
+
+    return {
+        subject: subjectId,
+        day: day,
+        start: start,
+        end: end,
+        topic: topic || "Study Session",
+        priority: priority,
+        repeat: "none"
+    };
+}
+
+// Action: Parse natural language prompt
+async function parseSessionWithAI() {
+    const input = document.getElementById('ai-prompt-input')?.value.trim();
+    if (!input) {
+        showToast("Please write details of the session first!", "warning");
+        return;
+    }
+    
+    setAIStatus('loading', 'Thinking...');
+    
+    const key = appState.settings.geminiApiKey;
+    const exam = appState.currentExam;
+    const examName = EXAM_SYLLABI[exam]?.name || exam.toUpperCase();
+    const subjectsText = EXAM_SYLLABI[exam]?.subjects.map(s => `- ${s.id}: ${s.name}`).join('\n');
+    
+    if (key) {
+        try {
+            const systemInstruction = `You are a strict parser for StudyMaster Pro. Parse the user request into a single session JSON.
+Return ONLY raw JSON conforming exactly to this structure:
+{
+  "subject": "matching subject_id string from the list",
+  "day": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday",
+  "start": "HH:MM",
+  "end": "HH:MM",
+  "topic": "topic description",
+  "priority": "low" | "medium" | "high",
+  "repeat": "none" | "daily" | "weekly" | "weekdays"
+}
+Rules:
+- Select the best subject ID match from the available list below.
+- Time format is 24-hour (HH:MM). If end time is not specified, default to 1 hour after start.
+- Do not output markdown, code blocks, or explanations. Just return raw JSON.
+
+Available Subjects for ${examName}:
+${subjectsText}`;
+            
+            const result = await callGeminiAPI(input, systemInstruction);
+            if (result && result.subject) {
+                lastParsedAISession = result;
+                renderAIParsedPreview(result);
+                showToast("✨ AI successfully parsed your session!", "success");
+            } else {
+                throw new Error("Invalid schema received.");
+            }
+        } catch (e) {
+            console.warn("OpenRouter parse failed. Falling back to local parser.", e);
+            showToast("⚠️ AI failed, using local offline fallback parser...", "warning");
+            const fallback = localFallbackParser(input);
+            lastParsedAISession = fallback;
+            renderAIParsedPreview(fallback);
+        }
+    } else {
+        showToast("💡 Configure your OpenRouter API Key in settings for full contextual parsing!", "info");
+        const fallback = localFallbackParser(input);
+        lastParsedAISession = fallback;
+        renderAIParsedPreview(fallback);
+    }
+    
+    setAIStatus('ready', 'AI Ready');
+}
+
+// Render parsed preview
+function renderAIParsedPreview(session) {
+    const placeholder = document.getElementById('ai-preview-placeholder');
+    const content = document.getElementById('ai-preview-content');
+    
+    if (!placeholder || !content) return;
+    placeholder.style.display = 'none';
+    content.style.display = 'flex';
+    
+    document.getElementById('ai-preview-subject').textContent = getSubjectName(session.subject);
+    document.getElementById('ai-preview-day').textContent = session.day;
+    document.getElementById('ai-preview-time').textContent = `${session.start} - ${session.end}`;
+    document.getElementById('ai-preview-topic').textContent = session.topic || 'No topic details';
+    
+    const priMap = { low: '🟢 Low', medium: '🟡 Medium', high: '🔴 High' };
+    document.getElementById('ai-preview-priority').textContent = priMap[session.priority] || '🟡 Medium';
+    
+    const repMap = { none: 'No Repeat', daily: 'Every Day', weekly: 'Every Week', weekdays: 'Weekdays Only' };
+    document.getElementById('ai-preview-repeat').textContent = repMap[session.repeat] || 'No Repeat';
+    
+    // Dynamic background matching subject color
+    const color = getSubjectColor(session.subject);
+    const badge = document.getElementById('ai-preview-subject');
+    if (badge) {
+        badge.style.backgroundColor = `${color}20`;
+        badge.style.color = color;
+        badge.style.borderColor = `${color}40`;
+    }
+}
+
+// Action: Save previewed session to timetable
+function addAIParsedSession() {
+    if (!lastParsedAISession) return;
+    
+    const session = {
+        id: `s_${Date.now()}`,
+        exam: appState.currentExam,
+        ...lastParsedAISession,
+        createdAt: getDateStr()
+    };
+    
+    appState.sessions.push(session);
+    saveState();
+    syncSession(session);
+    
+    // Refresh UIs
+    renderTimetableGrid();
+    renderTodaySchedule();
+    renderSessionList();
+    populateSubjectSelects();
+    renderTimerSubjects();
+    
+    showToast(`Session added successfully!`, `success`);
+    
+    // Reset preview
+    document.getElementById('ai-preview-placeholder').style.display = 'flex';
+    document.getElementById('ai-preview-content').style.display = 'none';
+    document.getElementById('ai-prompt-input').value = '';
+    lastParsedAISession = null;
+}
+
+// Action: Suggest complete weekly plan based on target exam
+async function generateWeeklyPlanWithAI() {
+    const key = appState.settings.geminiApiKey;
+    if (!key) {
+        showToast("Please provide an OpenRouter API Key in Settings to generate smart study plans!", "warning");
+        return;
+    }
+    
+    setAIStatus('loading', 'Generating Study Plan...');
+    
+    const exam = appState.currentExam;
+    const examName = EXAM_SYLLABI[exam]?.name || exam.toUpperCase();
+    const subjectsText = EXAM_SYLLABI[exam]?.subjects.map(s => `- ${s.id}: ${s.name}`).join('\n');
+    
+    try {
+        const systemInstruction = `You are a premium study planner assistant for StudyMaster Pro. Generate a balanced, realistic weekly study plan (array of study sessions) for a student preparing for: ${examName}.
+Return ONLY a valid raw JSON array conforming to this structure:
+[
+  {
+    "subject": "matching subject_id string",
+    "day": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday",
+    "start": "HH:MM",
+    "end": "HH:MM",
+    "topic": "topic suggestion suitable for ${examName}",
+    "priority": "low" | "medium" | "high",
+    "repeat": "none"
+  },
+  ...
+]
+Rules:
+- Generate between 5 and 7 sessions.
+- Sessions must map to subjects in the list below.
+- Schedule times realistically (e.g. 09:00 to 11:00, 14:00 to 16:00).
+- Do not output markdown, HTML, code blocks, or explanations. Just return raw JSON.
+
+Available Subjects:
+${subjectsText}`;
+
+        const prompt = `Generate a balanced weekly study timetable for a competitive exam student in ${examName}. Ensure it has daily structure.`;
+        const result = await callGeminiAPI(prompt, systemInstruction);
+        
+        if (Array.isArray(result)) {
+            suggestedAISessions = result;
+            renderSuggestedWeeklyPlan(result);
+            showToast("✨ AI generated a personalized study plan!", "success");
+        } else {
+            throw new Error("Response was not a JSON array.");
+        }
+    } catch (e) {
+        console.error(e);
+        showToast("❌ Plan generation failed. Verify OpenRouter API Key and try again.", "error");
+    } finally {
+        setAIStatus('ready', 'AI Ready');
+    }
+}
+
+
+// Render weekly plan list
+function renderSuggestedWeeklyPlan(sessions) {
+    const card = document.getElementById('ai-plan-card');
+    const list = document.getElementById('ai-suggested-list');
+    if (!card || !list) return;
+    
+    card.style.display = 'block';
+    
+    if (sessions.length === 0) {
+        list.innerHTML = '<div class="empty-state-sm">No suggested sessions.</div>';
+        return;
+    }
+    
+    list.innerHTML = sessions.map((s, idx) => {
+        const color = getSubjectColor(s.subject);
+        return `
+        <div class="ai-suggested-item" id="ai-sug-${idx}">
+            <div class="ai-suggested-indicator" style="background:${color}"></div>
+            <div class="ai-suggested-info">
+                <div class="ai-suggested-subject">${getSubjectName(s.subject)}</div>
+                <div class="ai-suggested-meta">${s.day} | ${s.start} - ${s.end} | ${s.topic}</div>
+            </div>
+            <button class="ai-suggested-remove" onclick="removeAISuggestedSession(${idx})" title="Remove item">✕</button>
+        </div>`;
+    }).join('');
+}
+
+// Remove single suggested session from preview list
+function removeAISuggestedSession(idx) {
+    suggestedAISessions.splice(idx, 1);
+    renderSuggestedWeeklyPlan(suggestedAISessions);
+}
+
+// Import all plan sessions to timetable
+function importAISuggestedPlan() {
+    if (suggestedAISessions.length === 0) return;
+    
+    suggestedAISessions.forEach(item => {
+        const session = {
+            id: `s_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            exam: appState.currentExam,
+            ...item,
+            createdAt: getDateStr()
+        };
+        appState.sessions.push(session);
+        syncSession(session);
+    });
+    
+    saveState();
+    
+    // Refresh UIs
+    renderTimetableGrid();
+    renderTodaySchedule();
+    renderSessionList();
+    populateSubjectSelects();
+    renderTimerSubjects();
+    
+    showToast(`Imported ${suggestedAISessions.length} sessions to your timetable!`, `success`);
+    
+    // Hide plan panel
+    document.getElementById('ai-plan-card').style.display = 'none';
+    suggestedAISessions = [];
+}
+
+// Export useful functions to window
+window.showSection = showSection;
+window.setExam = setExam;
+window.toggleSidebar = toggleSidebar;
+window.closeSidebar = closeSidebar;
+window.openSettings = openSettings;
+window.saveSettings = saveSettings;
+window.toggleTheme = toggleTheme;
+window.refreshQuote = refreshQuote;
+window.openAddSessionModal = openAddSessionModal;
+window.editSession = editSession;
+window.deleteSession = deleteSession;
+window.saveSession = saveSession;
+window.setPriority = setPriority;
+window.changeWeek = changeWeek;
+window.switchSyllabusExam = switchSyllabusExam;
+window.togglePaper = togglePaper;
+window.toggleTopic = toggleTopic;
+window.clearStudyLog = clearStudyLog;
+window.setTimerMode = setTimerMode;
+window.toggleTimer = toggleTimer;
+window.resetTimer = resetTimer;
+window.updateTimerSettings = updateTimerSettings;
+window.addNote = addNote;
+window.saveNote = saveNote;
+window.deleteNote = deleteNote;
+window.openNoteEdit = openNoteEdit;
+window.closeModal = closeModal;
+window.setNoteColor = setNoteColor;
+window.toggleSessionDone = toggleSessionDone;
+window.renderSessionList = renderSessionList;
+window.renderNotes = renderNotes;
+window.exportData = exportData;
+window.printTimetable = printTimetable;
+// Preset UPSC 6-Hour strategy plan
+async function importUPSC6HourPlan() {
+    if (!confirm("This preset is designed for UPSC IAS aspirants. It will clear your existing UPSC timetable and populate it with the 6-Hour/Day Daily Parallel schedule (Mains, Prelims, Optional, and Tests). Proceed?")) {
+        return;
+    }
+    
+    // Switch exam mode to UPSC to align subject IDs
+    setExam('upsc');
+    
+    // Clear existing UPSC sessions to ensure clean state
+    const oldSessions = appState.sessions.filter(s => s.exam === 'upsc');
+    for (const old of oldSessions) {
+        await syncSession(old, true); // Deletes from Supabase
+    }
+    appState.sessions = appState.sessions.filter(s => s.exam !== 'upsc');
+    
+    const presetSessions = [];
+    const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    
+    DAYS_OF_WEEK.forEach(day => {
+        presetSessions.push(
+            { subject: "upsc-gs1", day: day, start: "04:00", end: "05:30", topic: "Mains GS study block", priority: "high", repeat: "weekly" },
+            { subject: "upsc-optional", day: day, start: "05:45", end: "06:45", topic: "Optional study block (Morning)", priority: "high", repeat: "weekly" },
+            { subject: "upsc-optional", day: day, start: "19:30", end: "20:30", topic: "Optional study block (Evening)", priority: "medium", repeat: "weekly" },
+            { subject: "upsc-gs1", day: day, start: "20:45", end: "21:30", topic: "Prelims study block", priority: "medium", repeat: "weekly" },
+            { subject: "upsc-essay", day: day, start: "21:30", end: "22:00", topic: "Daily Test block", priority: "high", repeat: "weekly" }
+        );
+    });
+    
+    // Add all to appState
+    for (const item of presetSessions) {
+        const session = {
+            id: `s_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            exam: "upsc",
+            ...item,
+            createdAt: getDateStr()
+        };
+        appState.sessions.push(session);
+        await syncSession(session);
+    }
+    
+    saveState();
+    
+    // Refresh UI components
+    renderTimetableGrid();
+    renderTodaySchedule();
+    renderSessionList();
+    populateSubjectSelects();
+    renderTimerSubjects();
+    
+    showToast("🏛️ UPSC 6-Hour Parallel Study Plan loaded successfully!", "success");
+    showSection("timetable");
+}
+
+async function clearCurrentTimetable() {
+    const examName = EXAM_SYLLABI[appState.currentExam]?.name || appState.currentExam.toUpperCase();
+    if (!confirm(`Are you sure you want to clear all study sessions for the ${examName} exam? This will remove them permanently from local and cloud database.`)) {
+        return;
+    }
+    
+    const sessionsToClear = appState.sessions.filter(s => s.exam === appState.currentExam);
+    for (const session of sessionsToClear) {
+        await syncSession(session, true); // Deletes from Supabase
+    }
+    
+    appState.sessions = appState.sessions.filter(s => s.exam !== appState.currentExam);
+    saveState();
+    
+    // Refresh UIs
+    renderTimetableGrid();
+    renderTodaySchedule();
+    renderSessionList();
+    populateSubjectSelects();
+    renderTimerSubjects();
+    
+    showToast(`Cleared study sessions for ${examName}.`, 'info');
+}
+
+// ============================================================
+// CHRONOLOGICAL STUDY PLANNER ENGINE
+// ============================================================
+// ============================================================
+// CHRONOLOGICAL STUDY PLANNER ENGINE
+// ============================================================
+function getDynamicTimeline() {
+    // 1. Build Mains GS Queue (180 chapters)
+    const mainsGSQueue = [];
+    for (let i = 1; i <= 20; i++) mainsGSQueue.push({ subject: 'upsc-gs4', desc: `GS4: Ethics - Chapter ${i}` });
+    for (let i = 1; i <= 9; i++) mainsGSQueue.push({ subject: 'upsc-gs3', desc: `GS3: Internal Security - Chapter ${i}` });
+    for (let i = 1; i <= 8; i++) mainsGSQueue.push({ subject: 'upsc-gs3', desc: `GS3: Agriculture - Chapter ${i}` });
+    for (let i = 1; i <= 3; i++) mainsGSQueue.push({ subject: 'upsc-gs3', desc: `GS3: Environment - Chapter ${i}` });
+    for (let i = 1; i <= 3; i++) mainsGSQueue.push({ subject: 'upsc-gs3', desc: `GS3: Disaster Management - Chapter ${i}` });
+    for (let i = 1; i <= 5; i++) mainsGSQueue.push({ subject: 'upsc-gs3', desc: `GS3: Economy - Chapter ${i}` });
+    for (let i = 1; i <= 6; i++) mainsGSQueue.push({ subject: 'upsc-gs3', desc: `GS3: Science & Technology - Chapter ${i}` });
+    for (let i = 1; i <= 18; i++) mainsGSQueue.push({ subject: 'upsc-gs2', desc: `GS2: Polity & Governance - Chapter ${i}` });
+    for (let i = 1; i <= 11; i++) mainsGSQueue.push({ subject: 'upsc-gs2', desc: `GS2: International Relations (IR) - Chapter ${i}` });
+    for (let i = 1; i <= 3; i++) mainsGSQueue.push({ subject: 'upsc-gs2', desc: `GS2: Social Justice - Chapter ${i}` });
+    for (let i = 1; i <= 18; i++) mainsGSQueue.push({ subject: 'upsc-gs1', desc: `GS1: World History - Chapter ${i}` });
+    for (let i = 1; i <= 11; i++) mainsGSQueue.push({ subject: 'upsc-gs1', desc: `GS1: Modern History - Chapter ${i}` });
+    for (let i = 1; i <= 17; i++) mainsGSQueue.push({ subject: 'upsc-gs1', desc: `GS1: Art & Culture - Chapter ${i}` });
+    for (let i = 1; i <= 7; i++) mainsGSQueue.push({ subject: 'upsc-gs1', desc: `GS1: Post-Independence India (PCI) - Chapter ${i}` });
+    for (let i = 1; i <= 15; i++) mainsGSQueue.push({ subject: 'upsc-gs1', desc: `GS1: Indian Society - Chapter ${i}` });
+    for (let i = 1; i <= 26; i++) mainsGSQueue.push({ subject: 'upsc-gs1', desc: `GS1: Geography - Chapter ${i}` });
+
+    // 2. Optional Queue (170 chapters)
+    const optionalQueue = [];
+    for (let i = 1; i <= 86; i++) optionalQueue.push({ subject: 'upsc-optional', desc: `Optional: Paper I - Chapter ${i}` });
+    for (let i = 1; i <= 84; i++) optionalQueue.push({ subject: 'upsc-optional', desc: `Optional: Paper II - Chapter ${i}` });
+
+    // 3. Build Prelims Queue (102 chapters)
+    const prelimsQueue = [];
+    for (let i = 1; i <= 18; i++) prelimsQueue.push({ subject: 'upsc-gs3', desc: `Prelims: Economy - Chapter ${i}` });
+    for (let i = 1; i <= 18; i++) prelimsQueue.push({ subject: 'upsc-gs2', desc: `Prelims: Polity - Chapter ${i}` });
+    for (let i = 1; i <= 12; i++) prelimsQueue.push({ subject: 'upsc-gs1', desc: `Prelims: Geography - Chapter ${i}` });
+    for (let i = 1; i <= 12; i++) prelimsQueue.push({ subject: 'upsc-gs3', desc: `Prelims: Science & Technology - Chapter ${i}` });
+    for (let i = 1; i <= 12; i++) prelimsQueue.push({ subject: 'upsc-gs1', desc: `Prelims: Modern History - Chapter ${i}` });
+    for (let i = 1; i <= 12; i++) prelimsQueue.push({ subject: 'upsc-gs3', desc: `Prelims: Environment - Chapter ${i}` });
+    for (let i = 1; i <= 6; i++)  prelimsQueue.push({ subject: 'upsc-gs2', desc: `Prelims: International Relations (IR) - Chapter ${i}` });
+    for (let i = 1; i <= 12; i++) prelimsQueue.push({ subject: 'upsc-gs1', desc: `Prelims: Ancient, Medieval & Art & Culture (AMAC) - Chapter ${i}` });
+
+    const startDate = new Date(2026, 6, 1);
+    const endDate = new Date(2027, 0, 31);
+    const totalDays = Math.round((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+    
+    const dates = [];
+    for (let i = 0; i < totalDays; i++) {
+        const d = new Date(startDate);
+        d.setDate(startDate.getDate() + i);
+        
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const dateNum = String(d.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${dateNum}`;
+        
+        dates.push({
+            dateStr: dateStr,
+            dayName: d.toLocaleDateString('en-US', { weekday: 'long' })
+        });
+    }
+    
+    let completedCount = 0;
+    
+    // Pass 1: Count completed days (each completed day represents 1 step forward in all queues)
+    const timeline = dates.map((d, idx) => {
+        const completed = !!appState.timelineCompleted[d.dateStr];
+        if (completed) {
+            completedCount++;
+        }
+        return {
+            index: idx + 1,
+            date: d.dateStr,
+            dayName: d.dayName,
+            completed: completed,
+            morning: null,
+            optionalMorning: null,
+            evening1: null,
+            evening2: null,
+            test: null
+        };
+    });
+    
+    // Helper to get test details based on day of week
+    function getTestDetails(dayName) {
+        if (dayName === 'Monday') {
+            return { subject: 'upsc-csat', desc: 'Test: CSAT + GS Test' };
+        } else if (dayName === 'Tuesday') {
+            return { subject: 'upsc-csat', desc: 'Test: CSAT Analysis & Review' };
+        } else if (dayName === 'Wednesday' || dayName === 'Friday' || dayName === 'Sunday') {
+            return { subject: 'upsc-optional', desc: 'Test: Optional Subject Test' };
+        } else {
+            return { subject: 'upsc-gs1', desc: 'Test: GS Mains Answer Writing & MCQ Test' };
+        }
+    }
+    
+    // Assign completed days sequentially
+    let completedIndex = 0;
+    timeline.forEach(day => {
+        if (!day.completed) return;
+        
+        const mainsItem = mainsGSQueue[completedIndex] || { subject: 'upsc-gs1', desc: 'GS Mains Revision' };
+        const optItem = optionalQueue[completedIndex] || { subject: 'upsc-optional', desc: 'Optional Revision' };
+        const preItem = prelimsQueue[completedIndex] || { subject: 'upsc-gs3', desc: 'Prelims Revision' };
+        const testItem = getTestDetails(day.dayName);
+        
+        day.morning = { time: '04:00 - 05:30', subject: mainsItem.subject, desc: mainsItem.desc };
+        day.optionalMorning = { time: '05:45 - 06:45', subject: 'upsc-optional', desc: optItem.desc };
+        day.evening1 = { time: '19:30 - 20:30', subject: 'upsc-optional', desc: `${optItem.desc} (Revision)` };
+        day.evening2 = { time: '20:45 - 21:30', subject: preItem.subject, desc: preItem.desc };
+        day.test = { time: '21:30 - 22:00', subject: testItem.subject, desc: testItem.desc };
+        
+        completedIndex++;
+    });
+    
+    // Assign uncompleted days starting from completedCount
+    let nextIndex = completedCount;
+    timeline.forEach(day => {
+        if (day.completed) return;
+        
+        const mainsItem = mainsGSQueue[nextIndex] || { subject: 'upsc-gs1', desc: 'GS Mains Revision' };
+        const optItem = optionalQueue[nextIndex] || { subject: 'upsc-optional', desc: 'Optional Revision' };
+        const preItem = prelimsQueue[nextIndex] || { subject: 'upsc-gs3', desc: 'Prelims Revision' };
+        const testItem = getTestDetails(day.dayName);
+        
+        day.morning = { time: '04:00 - 05:30', subject: mainsItem.subject, desc: mainsItem.desc };
+        day.optionalMorning = { time: '05:45 - 06:45', subject: 'upsc-optional', desc: optItem.desc };
+        day.evening1 = { time: '19:30 - 20:30', subject: 'upsc-optional', desc: `${optItem.desc} (Revision)` };
+        day.evening2 = { time: '20:45 - 21:30', subject: preItem.subject, desc: preItem.desc };
+        day.test = { time: '21:30 - 22:00', subject: testItem.subject, desc: testItem.desc };
+        
+        nextIndex++;
+    });
+    
+    return timeline;
+}
+
+function generateChronologicalTimeline(force = false) {
+    if (appState.timeline && appState.timeline.length > 0 && !force) {
+        return; // Already initialized, don't overwrite unless forced
+    }
+    
+    if (force && !confirm("Reinitializing the timeline will reset your checked days. Proceed?")) {
+        return;
+    }
+    
+    appState.timelineCompleted = {};
+    appState.timeline = getDynamicTimeline();
+    saveState();
+    
+    if (force) {
+        showToast("📅 Chronological study timeline initialized!", "success");
+    }
+    renderTimelineList();
+}
+
+function renderTimelineList() {
+    const timeline = getDynamicTimeline();
+    appState.timeline = timeline; // Keep in sync for grid lookups
+
+    const container = document.getElementById('ai-timeline-list');
+    const searchVal = document.getElementById('timeline-search')?.value.toLowerCase() || '';
+    const filterStatus = document.getElementById('timeline-status-filter')?.value || 'all';
+    
+    if (!container) return;
+    
+    const todayStr = getDateStr();
+    
+    // Filters logic
+    let filtered = timeline;
+    if (searchVal) {
+        filtered = filtered.filter(day => {
+            const dateMatch = day.date.includes(searchVal) || day.dayName.toLowerCase().includes(searchVal);
+            const morningMatch = day.morning?.desc?.toLowerCase().includes(searchVal);
+            const evening1Match = day.evening1?.desc?.toLowerCase().includes(searchVal);
+            const evening2Match = day.evening2?.desc?.toLowerCase().includes(searchVal);
+            return dateMatch || morningMatch || evening1Match || evening2Match;
+        });
+    }
+    
+    if (filterStatus === 'completed') {
+        filtered = filtered.filter(day => appState.timelineCompleted[day.date]);
+    } else if (filterStatus === 'uncompleted') {
+        filtered = filtered.filter(day => !appState.timelineCompleted[day.date]);
+    }
+    
+    // Stats calculation
+    const completedDays = Object.values(appState.timelineCompleted).filter(Boolean).length;
+    const totalDaysCount = appState.timeline.length;
+    const progressPct = totalDaysCount ? Math.round((completedDays / totalDaysCount) * 100) : 0;
+    
+    // Find current focus (first uncompleted day)
+    const activeDay = appState.timeline.find(day => !appState.timelineCompleted[day.date]);
+    const focusText = activeDay ? `${activeDay.morning?.desc || 'General study'}` : 'All complete! 🎉';
+    
+    // Update stats UI
+    const progressEl = document.getElementById('t-stat-progress');
+    const daysEl = document.getElementById('t-stat-days');
+    const focusEl = document.getElementById('t-stat-focus');
+    if (progressEl) progressEl.textContent = `${progressPct}%`;
+    if (daysEl) daysEl.textContent = `${completedDays} / ${totalDaysCount} days`;
+    if (focusEl) focusEl.textContent = focusText;
+    
+    if (filtered.length === 0) {
+        container.innerHTML = `<div class="empty-state-sm"><span>📅</span><p>No matching study plan dates found.</p></div>`;
+        return;
+    }
+    
+    container.innerHTML = filtered.map(day => {
+        const isDone = appState.timelineCompleted[day.date];
+        const isToday = day.date === todayStr;
+        
+        let detailsHTML = '';
+        if (day.morning) {
+            const mColor = getSubjectColor(day.morning.subject);
+            detailsHTML += `
+            <div class="timeline-session-pill">
+                <span class="pill-tag" style="background:${mColor}">${getSubjectName(day.morning.subject).split(' ')[0]}</span>
+                <span class="pill-desc">${day.morning.desc}</span>
+                <span class="pill-sub">${day.morning.time}</span>
+            </div>`;
+        }
+        if (day.optionalMorning) {
+            const opColor = getSubjectColor(day.optionalMorning.subject);
+            detailsHTML += `
+            <div class="timeline-session-pill">
+                <span class="pill-tag" style="background:${opColor}">${getSubjectName(day.optionalMorning.subject).split(' ')[0]}</span>
+                <span class="pill-desc">${day.optionalMorning.desc}</span>
+                <span class="pill-sub">${day.optionalMorning.time}</span>
+            </div>`;
+        }
+        if (day.evening1) {
+            const evColor1 = getSubjectColor(day.evening1.subject);
+            detailsHTML += `
+            <div class="timeline-session-pill">
+                <span class="pill-tag" style="background:${evColor1}">${getSubjectName(day.evening1.subject).split(' ')[0]}</span>
+                <span class="pill-desc">${day.evening1.desc}</span>
+                <span class="pill-sub">${day.evening1.time}</span>
+            </div>`;
+        }
+        if (day.evening2) {
+            const evColor2 = getSubjectColor(day.evening2.subject);
+            detailsHTML += `
+            <div class="timeline-session-pill">
+                <span class="pill-tag" style="background:${evColor2}">${getSubjectName(day.evening2.subject).split(' ')[0]}</span>
+                <span class="pill-desc">${day.evening2.desc}</span>
+                <span class="pill-sub">${day.evening2.time}</span>
+            </div>`;
+        }
+        if (day.test) {
+            const testColor = getSubjectColor(day.test.subject);
+            detailsHTML += `
+            <div class="timeline-session-pill">
+                <span class="pill-tag" style="background:${testColor}">Test</span>
+                <span class="pill-desc">${day.test.desc}</span>
+                <span class="pill-sub">${day.test.time}</span>
+            </div>`;
+        }
+        
+        return `
+        <div class="timeline-day-card ${isDone ? 'completed' : ''} ${isToday ? 'active-day' : ''}">
+            <div class="timeline-day-check" onclick="toggleTimelineDay(${day.index}, '${day.date}')">
+                ${isDone ? '✓' : ''}
+            </div>
+            <div class="timeline-day-info">
+                <div class="timeline-day-num">Day ${day.index}</div>
+                <div class="timeline-day-date">${formatDate(day.date)} (${day.dayName.slice(0,3)})</div>
+            </div>
+            <div class="timeline-day-details">
+                ${detailsHTML}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function toggleTimelineDay(dayIndex, date) {
+    const isDone = !appState.timelineCompleted[date];
+    appState.timelineCompleted[date] = isDone;
+    
+    // Integrate with study log and calendar data
+    if (isDone) {
+        // Log study time: 6 hours = 360 min
+        appState.studyLog.unshift({
+            subject: `📅 UPSC Day ${dayIndex} Complete`,
+            duration: 360,
+            date: date,
+            color: '#8b5cf6'
+        });
+        appState.calendarData[date] = (appState.calendarData[date] || 0) + 360;
+        showToast(`Day ${dayIndex} completed! 360 focus minutes logged. 📚`, 'success');
+    } else {
+        // Remove from log
+        appState.studyLog = appState.studyLog.filter(l => l.subject !== `📅 UPSC Day ${dayIndex} Complete`);
+        if (appState.calendarData[date] >= 360) appState.calendarData[date] -= 360;
+        showToast(`Day ${dayIndex} unmarked.`, 'info');
+    }
+    
+    saveState();
+    syncUserSettings(); // sync calendar data
+    
+    // Refresh UIs
+    renderTimelineList();
+    renderStudyLog();
+    renderCalendarHeatmap();
+    renderWeeklyHeatmap();
+    renderStatCards();
+}
+
+window.importUPSC6HourPlan = importUPSC6HourPlan;
+window.clearCurrentTimetable = clearCurrentTimetable;
+
+// Auth
+window.switchAuthTab = switchAuthTab;
+window.handleAuthSubmit = handleAuthSubmit;
+window.handleSignOut = handleSignOut;
+// AI
+window.parseSessionWithAI = parseSessionWithAI;
+window.addAIParsedSession = addAIParsedSession;
+window.generateWeeklyPlanWithAI = generateWeeklyPlanWithAI;
+window.removeAISuggestedSession = removeAISuggestedSession;
+window.importAISuggestedPlan = importAISuggestedPlan;
+// Timeline
+window.generateChronologicalTimeline = generateChronologicalTimeline;
+window.renderTimelineList = renderTimelineList;
+window.toggleTimelineDay = toggleTimelineDay;
+
+console.log('🎓 StudyMaster Pro + Supabase loaded!');
+console.log('Shortcuts: Ctrl+N (New Session), Ctrl+T (Timetable), Ctrl+D (Dashboard), Ctrl+S (Syllabus), Ctrl+P (Progress)');
